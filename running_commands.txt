@@ -1,0 +1,9 @@
+pip install -r requirements.txt
+python -m unittest tests/test_pipeline.py
+python main.py --mode research
+python main.py --mode advanced
+python main.py --mode ablation
+python main.py --mode interpret
+python main.py --mode ensemble
+python main.py --mode simulation
+streamlit run dashboard.py

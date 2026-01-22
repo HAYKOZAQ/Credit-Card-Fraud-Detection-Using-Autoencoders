@@ -1,0 +1,11 @@
+step,auprc,strategy
+20,0.4505569595559314,reconstruction_error
+40,0.38007581113117167,reconstruction_error
+60,0.369976164114856,reconstruction_error
+80,0.41011822036736967,reconstruction_error
+100,0.5428719304325816,reconstruction_error
+120,0.5008191634470951,reconstruction_error
+140,0.54387089935172,reconstruction_error
+160,0.5852235512455355,reconstruction_error
+180,0.6083560411200899,reconstruction_error
+200,0.5297712890340545,reconstruction_error

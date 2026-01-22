@@ -1,0 +1,13 @@
+torch
+torchvision
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+gradio
+plotly
+shap
+xgboost
+streamlit
+scipy
