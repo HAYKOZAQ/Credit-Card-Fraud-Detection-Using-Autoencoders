@@ -23,6 +23,7 @@ class GANTrainer:
         print("Starting GAN Training (minority oversampling)...")
         self.generator.train()
         self.discriminator.train()
+        d_loss = g_loss = None
         
         for epoch in range(epochs):
             for real_samples, _ in self.loader:
@@ -57,7 +58,7 @@ class GANTrainer:
                 g_loss.backward()
                 self.g_optimizer.step()
                 
-            if (epoch+1) % 10 == 0:
+            if (epoch+1) % 10 == 0 and d_loss is not None:
                 print(f"GAN Epoch {epoch+1}: D_Loss: {d_loss.item():.4f}, G_Loss: {g_loss.item():.4f}")
                 
     def generate_synthetics(self, num_samples):

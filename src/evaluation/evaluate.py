@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 import pandas as pd
-from sklearn.metrics import classification_report
 from sklearn.manifold import TSNE
 import os
 import matplotlib.pyplot as plt
@@ -26,7 +25,10 @@ def get_reconstruction_errors(model, dataloader):
             elif is_contrastive:
                 recon_x, _ = model(inputs)
             elif is_graph:
-                adj = torch.eye(inputs.size(0), device=Config.DEVICE)
+                dists = torch.cdist(inputs, inputs)
+                sigma = dists.mean()
+                adj = torch.exp(-dists / (sigma + 1e-8))
+                adj = adj / adj.sum(dim=1, keepdim=True)
                 recon_x, _ = model(inputs, adj)
             else:
                 recon_x = model(inputs)
@@ -38,42 +40,7 @@ def get_reconstruction_errors(model, dataloader):
             errors.extend(mse.cpu().numpy())
     return np.array(errors)
 
-def evaluate_model(model, train_loader, test_loader, fraud_loader):
-    # Get errors for different sets
-    train_errors = get_reconstruction_errors(model, train_loader)
-    test_errors = get_reconstruction_errors(model, test_loader)
-    fraud_errors = get_reconstruction_errors(model, fraud_loader)
-    
-    # Calculate threshold (mean + 3*std of normal training errors)
-    threshold = np.mean(train_errors) + 3 * np.std(train_errors)
-    print(f"Calculated Threshold for Fraud: {threshold:.4f}")
-    
-    # Predict
-    y_true = [0] * len(test_errors) + [1] * len(fraud_errors)
-    all_errors = np.concatenate([test_errors, fraud_errors])
-    y_pred = [1 if e > threshold else 0 for e in all_errors]
-    
-    # Report
-    print("\n" + "="*40)
-    print("FINAL EVALUATION REPORT")
-    print("="*40)
-    print(classification_report(y_true, y_pred, target_names=['Normal', 'Fraud']))
-    
-    # 1. Visualization (Matplotlib)
-    plt.figure(figsize=(10, 6))
-    sns.histplot(test_errors, color='blue', label='Normal (Test)', kde=True, alpha=0.5)
-    sns.histplot(fraud_errors, color='red', label='Fraud', kde=True, alpha=0.5)
-    plt.axvline(threshold, color='green', linestyle='--', linewidth=2, label='Threshold')
-    plt.title(f'Distribution of Reconstruction Errors - {model.__class__.__name__}')
-    plt.xlabel('Reconstruction Error (MSE)')
-    plt.legend()
-    
-    img_path = os.path.join(Config.VIZ_DIR, f"errors_{model.__class__.__name__.lower()}.png")
-    plt.savefig(img_path)
-    plt.close()
-    print(f"Distribution plot saved to: {img_path}")
-
-def plot_history(history):
+def plot_history(history, model_name="model"):
     plt.figure(figsize=(10, 6))
     plt.plot(history['train_loss'], label='Train Loss')
     plt.plot(history['val_loss'], label='Val Loss')
@@ -82,7 +49,7 @@ def plot_history(history):
     plt.ylabel('MSE Loss')
     plt.legend()
     plt.grid(True)
-    img_path = os.path.join(Config.VIZ_DIR, "training_history.png")
+    img_path = os.path.join(Config.VIZ_DIR, f"training_history_{model_name}.png")
     plt.savefig(img_path)
     plt.close()
     print(f"Training history plot saved to: {img_path}")
@@ -123,7 +90,7 @@ def plot_feature_importance(model, fraud_loader, feature_names):
     plt.title("Global Feature Importance")
     plt.xlabel("Mean Reconstruction Error")
     plt.tight_layout()
-    img_path = os.path.join(Config.VIZ_DIR, "feature_importance.png")
+    img_path = os.path.join(Config.VIZ_DIR, f"feature_importance_{model.__class__.__name__.lower()}.png")
     plt.savefig(img_path)
     plt.close()
     print(f"Feature importance saved to: {img_path}")
@@ -241,34 +208,29 @@ def plot_uncertainty_vs_error(errors, uncertainties, labels):
     print(f"Uncertainty plot saved to {viz_path}")
 
 def plot_merchant_heatmap(fraud_df, reconstruction_errors):
-    """
-    Plots heatmap of Merchant vs Fraud/Error.
-    """
     df = fraud_df.copy()
     
     if len(df) != len(reconstruction_errors):
         min_len = min(len(df), len(reconstruction_errors))
+        print(f"Warning: Mismatched lengths — df={len(df)}, errors={len(reconstruction_errors)}. Truncating to {min_len}.")
         df = df.iloc[:min_len]
         reconstruction_errors = reconstruction_errors[:min_len]
         
     df['error'] = reconstruction_errors
     
     if 'merchant' not in df.columns:
-        return
+        print("Warning: 'merchant' column missing — plots without merchant group-by.")
+        df['merchant'] = 'unknown'
 
-    merch_stats = df.groupby('merchant').agg({
-        'is_fraud': 'mean', # Rate
-        'error': 'mean',
-        'amt': 'count' # Volume
-    }).rename(columns={'is_fraud': 'Fraud Rate', 'error': 'Avg Reconstruction Error', 'amt': 'Volume'})
-    
-    # Filter for volume
-    merch_stats = merch_stats[merch_stats['Volume'] > 5]
+    merch_stats = df.groupby('merchant').agg(error=('error', 'mean'), volume=('error', 'count')).reset_index()
+    merch_stats = merch_stats[merch_stats['volume'] > 5]
+    if 'is_fraud' in df.columns:
+        fraud_rate = df.groupby('merchant')['is_fraud'].mean().reset_index()
+        merch_stats = merch_stats.merge(fraud_rate, on='merchant')
     
     plt.figure(figsize=(12, 8))
-    # We can't do density heatmap exactly same as plotly easily without bi-variate histogram data
-    # But we can plot points colored by volume or just a hexbin
-    plt.hist2d(merch_stats['Avg Reconstruction Error'], merch_stats['Fraud Rate'], bins=20, cmap='viridis')
+    y_col = 'is_fraud' if 'is_fraud' in merch_stats.columns else 'error'
+    plt.hist2d(merch_stats['error'], merch_stats[y_col], bins=20, cmap='viridis')
     plt.colorbar(label='Count of Merchants')
     plt.title('Merchant Landscape: Fraud Rate vs Reconstruction Error')
     plt.xlabel('Avg Reconstruction Error')
@@ -279,10 +241,13 @@ def plot_merchant_heatmap(fraud_df, reconstruction_errors):
     plt.close()
     print(f"Merchant heatmap saved to {viz_path}")
 
-def plot_cumulative_fraud(model, test_df, fraud_df, test_loader, fraud_loader):
+def plot_cumulative_fraud(model, test_df, fraud_df, test_loader, fraud_loader,
+                          normal_errors=None, fraud_errors=None):
     model.eval()
-    normal_errors = get_reconstruction_errors(model, test_loader)
-    fraud_errors = get_reconstruction_errors(model, fraud_loader)
+    if normal_errors is None:
+        normal_errors = get_reconstruction_errors(model, test_loader)
+    if fraud_errors is None:
+        fraud_errors = get_reconstruction_errors(model, fraud_loader)
     
     test_res = test_df.copy()
     test_res['error'] = normal_errors
@@ -293,32 +258,47 @@ def plot_cumulative_fraud(model, test_df, fraud_df, test_loader, fraud_loader):
     fraud_res['label'] = 1
     
     combined = pd.concat([test_res, fraud_res])
-    # Ensure date format
-    if 'trans_date_trans_time' in combined.columns:
-        combined['trans_date_trans_time'] = pd.to_datetime(combined['trans_date_trans_time'])
-        combined = combined.sort_values('trans_date_trans_time')
-        
+    time_col = 'trans_date_trans_time' if 'trans_date_trans_time' in combined.columns else None
+    if time_col and combined[time_col].dtype != 'datetime64[ns]':
+        combined[time_col] = pd.to_datetime(combined[time_col], errors='coerce')
+    
+    if time_col and not combined[time_col].isna().all():
+        combined = combined.sort_values(time_col)
         threshold = np.mean(normal_errors) + 3*np.std(normal_errors)
         combined['predicted_fraud'] = combined['error'] > threshold
-        
         combined['cumulative_frauds_detected'] = combined['predicted_fraud'].cumsum()
         combined['cumulative_actual_frauds'] = combined['label'].cumsum()
-        
         plt.figure(figsize=(12, 6))
-        plt.plot(combined['trans_date_trans_time'], combined['cumulative_frauds_detected'], label='Detected Frauds')
-        plt.plot(combined['trans_date_trans_time'], combined['cumulative_actual_frauds'], label='Actual Frauds')
+        plt.plot(combined[time_col], combined['cumulative_frauds_detected'], label='Detected Frauds')
+        plt.plot(combined[time_col], combined['cumulative_actual_frauds'], label='Actual Frauds')
         plt.title('Cumulative Fraud Detection Over Time')
         plt.xlabel('Time')
         plt.ylabel('Count')
         plt.legend()
         plt.grid(True)
-        
         viz_path = os.path.join(Config.VIZ_DIR, "cumulative_fraud.png")
         plt.savefig(viz_path)
         plt.close()
         print(f"Cumulative plot saved to {viz_path}")
     else:
-        print("Time column missing for cumulative plot.")
+        combined = combined.reset_index(drop=True)
+        combined['sample_index'] = combined.index
+        threshold = np.mean(normal_errors) + 3*np.std(normal_errors)
+        combined['predicted_fraud'] = combined['error'] > threshold
+        combined['cumulative_frauds_detected'] = combined['predicted_fraud'].cumsum()
+        combined['cumulative_actual_frauds'] = combined['label'].cumsum()
+        plt.figure(figsize=(12, 6))
+        plt.plot(combined['sample_index'], combined['cumulative_frauds_detected'], label='Detected Frauds')
+        plt.plot(combined['sample_index'], combined['cumulative_actual_frauds'], label='Actual Frauds')
+        plt.title('Cumulative Fraud Detection Over Samples')
+        plt.xlabel('Sample Index')
+        plt.ylabel('Count')
+        plt.legend()
+        plt.grid(True)
+        viz_path = os.path.join(Config.VIZ_DIR, "cumulative_fraud.png")
+        plt.savefig(viz_path)
+        plt.close()
+        print(f"Cumulative plot saved to {viz_path}")
 def calculate_shap_values(model, train_loader, test_loader, feature_names):
     """
     Computes SHAP values for the Autoencoder.
@@ -342,14 +322,17 @@ def calculate_shap_values(model, train_loader, test_loader, feature_names):
 
     explainer = shap.KernelExplainer(model_wrapper, background_data.cpu().numpy())
     
-    # Explain some samples from test_loader
     test_samples = []
     for inputs, _ in test_loader:
         test_samples.append(inputs)
         if len(test_samples) > 1: break
     test_samples = torch.cat(test_samples, dim=0)[:10].cpu().numpy()
     
-    shap_values = explainer.shap_values(test_samples)
+    try:
+        shap_values = explainer.shap_values(test_samples)
+    except Exception as e:
+        print(f"Warning: SHAP computation failed ({e}). Skipping SHAP summary plot.")
+        return None
     
     plt.figure()
     shap.summary_plot(shap_values, test_samples, feature_names=feature_names, show=False)
@@ -372,10 +355,13 @@ def ensemble_scoring(models_dict, dataloader):
         # Normalize errors to [0, 1] range for fair weighting?
         # Or just use raw MSE. Better to normalize by max.
         norm_errors = (errors - errors.min()) / (errors.max() - errors.min() + 1e-10)
+        if np.std(errors) < 1e-10:
+            norm_errors = np.zeros_like(errors)
+        else:
+            norm_errors = (errors - errors.min()) / (errors.max() - errors.min() + 1e-10)
         all_scores.append(norm_errors)
         
-        # Simple heuristic weights: VAE and Attention get slightly more weight
-        if 'VAE' in name or 'Attention' in name:
+        if 'vae' in name.lower() or 'attention' in name.lower():
             weights.append(1.5)
         else:
             weights.append(1.0)

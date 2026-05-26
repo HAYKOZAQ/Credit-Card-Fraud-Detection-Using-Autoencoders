@@ -11,24 +11,29 @@ class HybridModel:
     def get_embeddings(self, data_loader):
         self.ae.eval()
         embeddings = []
-        labels = []
         with torch.no_grad():
             for inputs, targets in data_loader:
                 inputs = inputs.to(Config.DEVICE)
-                # Standard AE encoder
                 if hasattr(self.ae, 'encoder'):
                     z = self.ae.encoder(inputs)
-                else: # For VAE
+                elif hasattr(self.ae, 'encode'):
                     z, _ = self.ae.encode(inputs)
+                elif hasattr(self.ae, 'gc1'):
+                    dists = torch.cdist(inputs, inputs)
+                    sigma = dists.mean()
+                    adj = torch.exp(-dists / (sigma + 1e-8))
+                    adj = adj / adj.sum(dim=1, keepdim=True)
+                    h = torch.relu(self.ae.gc1(inputs, adj))
+                    z = torch.relu(self.ae.gc2(h, adj))
+                else:
+                    raise TypeError(f"Unsupported model type: {type(self.ae).__name__}")
                 embeddings.append(z.cpu().numpy())
-                # Note: For targets, we might need actual binary labels if available
-                # However, during representation learning, we use whatever is in the loader
         return np.concatenate(embeddings)
 
     def train_classifier(self, X_train_emb, y_train, X_test_emb):
         print("Training Hybrid Classifier (AE Embeddings + XGBoost)...")
         ratio = (len(y_train) - sum(y_train)) / sum(y_train) if sum(y_train) > 0 else 1
-        self.classifier = XGBClassifier(scale_pos_weight=ratio, random_state=Config.SEED)
+        self.classifier = XGBClassifier(scale_pos_weight=ratio, random_state=Config.SEED, use_label_encoder=False, eval_metric='logloss')
         self.classifier.fit(X_train_emb, y_train)
         preds = self.classifier.predict(X_test_emb)
         probs = self.classifier.predict_proba(X_test_emb)[:, 1]

@@ -29,24 +29,13 @@ class AttentionBlock(nn.Module):
         self.scale = input_dim ** -0.5
         
     def forward(self, x):
-        # x: [batch, dim]
-        # Simple self-attention for tabular data (feature attention)
-        # Usually attention is over sequence [batch, seq, dim].
-        # For tabular [batch, dim], we can treat dim as sequence length 1? No.
-        # "Make your AE 'focus' on important features". 
-        # We can treat features as a sequence if we unsqueeze, or learn weights per feature.
-        # But standard self-attention is calculating relationship between samples in a batch? No, intra-sample.
-        # Tabular self-attention: usually requires projecting features to embeddings [batch, num_feats, emb_dim].
-        # Here input is just [batch, input_dim].
-        # Let's implement a simple "Feature Attention" mechanism:
-        # Weights features based on their importance dynamically.
-        
-        # Validation: We really need feature embeddings to do proper feature-wise attention.
-        # As a simplification for this project:
-        # Gate mechanism (Attention-like): Input * Sigmoid(MLP(Input))
-        
-        attention_weights = torch.sigmoid(self.query(x))
-        return x * attention_weights
+        q = self.query(x).unsqueeze(1)
+        k = self.key(x).unsqueeze(1)
+        v = self.value(x).unsqueeze(1)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        attn = torch.softmax(scores, dim=-1)
+        context = torch.matmul(attn, v).squeeze(1)
+        return context + x
 
 class AttentionAutoencoder(nn.Module):
     def __init__(self, input_dim=Config.INPUT_DIM):
@@ -78,12 +67,8 @@ class Generator(nn.Module):
             nn.Linear(64, 128),
             nn.LeakyReLU(0.2, inplace=True),
             nn.BatchNorm1d(128),
-            nn.Linear(128, output_dim),
-            nn.Tanh() # Assuming scaler scales to [-1, 1] or similar? StandardScaler is mean 0 std 1. Tanh might limit range. Linear is safer for unbounded.
-            # But usually we match range. Let's use Linear and rely on loss.
+            nn.Linear(128, output_dim)
         )
-        # Replacing last Tanh with Linear as features are standard scaled (unbounded)
-        self.model[-1] = nn.Linear(128, output_dim)
 
     def forward(self, z):
         return self.model(z)

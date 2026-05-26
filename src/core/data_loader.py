@@ -121,16 +121,21 @@ def create_sequences(df, scaler):
 
     for col in Config.CATEGORICAL_COLS:
         if col in encoders:
-            df[col] = encoders[col].transform(df[col].astype(str))
+            raw_vals = df[col].astype(str)
+            known = set(encoders[col].classes_)
+            safe_vals = raw_vals.apply(lambda x: x if x in known else encoders[col].classes_[0])
+            df[col] = encoders[col].transform(safe_vals)
     
     scaled_feats = scaler.transform(df[features].values)
     df_scaled = pd.DataFrame(scaled_feats, columns=features)
     df_scaled['cust_id'] = df['cust_id'].values
     
     sequences = []
-    # Limit number of customers processed for speed
     all_custs = df_scaled['cust_id'].unique()
-    for cust in all_custs[:1000]: # Sample 1000 customers
+    processed_custs = min(len(all_custs), 1000)
+    if len(all_custs) > 1000:
+        print(f"Note: Only processing {processed_custs}/{len(all_custs)} customers for sequence creation.")
+    for cust in all_custs[:processed_custs]:
         group = df_scaled[df_scaled['cust_id'] == cust]
         if len(group) >= Config.SEQ_LEN:
             data = group[features].values
@@ -138,8 +143,7 @@ def create_sequences(df, scaler):
                 sequences.append(data[i:i+Config.SEQ_LEN])
     
     if not sequences:
-        print("Warning: No sequences created!")
-        return np.zeros((1, Config.SEQ_LEN, len(features)))
+        raise ValueError("No sequences created! Check that SEQ_LEN <= min transaction counts per customer.")
         
     return np.array(sequences)
 
@@ -160,6 +164,9 @@ def get_dataloaders():
 
 
 def get_sequential_loaders():
+    if not os.path.exists(Config.SCALER_PATH) or not os.path.exists(Config.ENCODER_PATH):
+        raise FileNotFoundError(
+            "Scaler/encoder files not found. Run 'python main.py --mode research' first.")
     df = pd.read_csv(Config.DATA_PATH)
     with open(Config.SCALER_PATH, 'rb') as f:
         scaler = pickle.load(f)
@@ -183,9 +190,10 @@ def get_sequential_loaders():
 def get_merchant_loaders():
     """
     Creates sequences grouped by merchant. 
-    Using 'city_pop' + 'merch_lat' as a proxy for merchant ID if 'merchant' col is dropped early or not unique enough.
-    Actually 'merchant' column exists in raw data.
     """
+    if not os.path.exists(Config.SCALER_PATH) or not os.path.exists(Config.ENCODER_PATH):
+        raise FileNotFoundError(
+            "Scaler/encoder files not found. Run 'python main.py --mode research' first.")
     df = pd.read_csv(Config.DATA_PATH)
     with open(Config.SCALER_PATH, 'rb') as f:
         scaler = pickle.load(f)
@@ -209,7 +217,10 @@ def get_merchant_loaders():
 
     for col in Config.CATEGORICAL_COLS:
         if col in encoders:
-            df[col] = encoders[col].transform(df[col].astype(str))
+            raw_vals = df[col].astype(str)
+            known = set(encoders[col].classes_)
+            safe_vals = raw_vals.apply(lambda x: x if x in known else encoders[col].classes_[0])
+            df[col] = encoders[col].transform(safe_vals)
         
     scaled_feats = scaler.transform(df[features].values)
     df_scaled = pd.DataFrame(scaled_feats, columns=features)
@@ -228,8 +239,7 @@ def get_merchant_loaders():
                 sequences.append(data[i:i+Config.SEQ_LEN])
                 
     if not sequences:
-        print("Warning: No merchant sequences created!")
-        return DataLoader(SequenceDataset(np.zeros((1, Config.SEQ_LEN, len(features)))), batch_size=Config.BATCH_SIZE)
+        raise ValueError("No merchant sequences created! Check that SEQ_LEN <= min transaction counts per merchant.")
         
     # Simple split for demonstration (80/20)
     full_seq = np.array(sequences)

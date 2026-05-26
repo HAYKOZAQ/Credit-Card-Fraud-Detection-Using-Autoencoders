@@ -3,14 +3,13 @@ import torch
 
 class Config:
     # Paths
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     DATA_PATH = os.path.join(BASE_DIR, "data", "credit_card_fraud.csv")
     MODEL_DIR = os.path.join(BASE_DIR, "models")
     SCALER_PATH = os.path.join(MODEL_DIR, "scaler.pkl")
     ENCODER_PATH = os.path.join(MODEL_DIR, "encoders.pkl")
     VIZ_DIR = os.path.join(BASE_DIR, "visualizations")
     RESULTS_DIR = os.path.join(BASE_DIR, "results")
-    IMAGES_DIR = os.path.join(BASE_DIR, "visualizations") # Unified folder
     
     # Preprocessing
     CATEGORICAL_COLS = ['category', 'job']

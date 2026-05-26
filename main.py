@@ -7,6 +7,14 @@ import os
 import argparse
 import pickle
 import matplotlib.pyplot as plt
+
+_cached_dataloaders = None
+
+def _get_cached_dataloaders():
+    global _cached_dataloaders
+    if _cached_dataloaders is None:
+        _cached_dataloaders = get_dataloaders()
+    return _cached_dataloaders
 from src.core.config import Config
 from src.core.data_loader import get_dataloaders, get_sequential_loaders
 from src.core.model import get_model
@@ -48,14 +56,25 @@ def run_research_suite(train_loader, test_loader, fraud_loader):
     X_test_raw = test_loader.dataset.data.numpy()
     X_fraud_raw_arr = fraud_loader.dataset.data.numpy()
     
-    n_train = min(len(X_train_raw), 5000)
-    n_fraud = min(len(X_fraud_raw_arr), 1000)
+    n_normal_train = min(len(X_train_raw), 5000)
+    n_fraud_train = min(len(X_fraud_raw_arr) // 2, 1000)
+    n_fraud_train = max(n_fraud_train, 1) if len(X_fraud_raw_arr) > 0 else 0
     
-    X_bench_train = np.concatenate([X_train_raw[:n_train], X_fraud_raw_arr[:n_fraud]]) 
-    y_bench_train = np.concatenate([np.zeros(n_train), np.ones(n_fraud)])
+    if n_fraud_train > 0:
+        X_bench_train = np.concatenate([X_train_raw[:n_normal_train], X_fraud_raw_arr[:n_fraud_train]]) 
+        y_bench_train = np.concatenate([np.zeros(n_normal_train), np.ones(n_fraud_train)])
+        X_bench_test = np.concatenate([X_test_raw, X_fraud_raw_arr[n_fraud_train:]])
+        y_bench_test = np.concatenate([np.zeros(len(X_test_raw)), np.ones(len(X_fraud_raw_arr) - n_fraud_train)])
+    else:
+        X_bench_train = X_train_raw[:n_normal_train]
+        y_bench_train = np.zeros(n_normal_train)
+        X_bench_test = X_test_raw
+        y_bench_test = np.zeros(len(X_test_raw))
     
-    X_bench_test = np.concatenate([X_test_raw, X_fraud_raw_arr])
-    y_bench_test = np.concatenate([np.zeros(len(X_test_raw)), np.ones(len(X_fraud_raw_arr))])
+    n_pos_train = np.sum(y_bench_train)
+    n_neg_train = len(y_bench_train) - n_pos_train
+    if n_pos_train == 0 or n_neg_train == 0:
+        print(f"Warning: XGBoost train set imbalance — pos={n_pos_train}, neg={n_neg_train}. Metrics may be degenerate.")
 
     _, _, xgb_probs = Baselines.train_xgboost(X_bench_train, y_bench_train, X_bench_test)
     xgb_metrics, _ = FraudEvaluator.calculate_metrics(y_bench_test, xgb_probs)
@@ -70,10 +89,10 @@ def run_research_suite(train_loader, test_loader, fraud_loader):
         
         model_name = model.__class__.__name__.lower()
         model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name}.pth")
-        model.load_state_dict(torch.load(model_save_path))
+        model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE, weights_only=False))
         
         # Save training history plots
-        plot_history(history)
+        plot_history(history, model_name=ae_type)
         
         test_errors = get_reconstruction_errors(model, test_loader)
         fraud_errors = get_reconstruction_errors(model, fraud_loader)
@@ -130,7 +149,9 @@ def run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_d
     
     # Load best weights
     mc_path = os.path.join(Config.MODEL_DIR, "mcdropoutautoencoder.pth")
-    mc_model.load_state_dict(torch.load(mc_path))
+    if not os.path.exists(mc_path):
+        raise FileNotFoundError(f"MC Dropout model not found at {mc_path}. Training may have failed.")
+    mc_model.load_state_dict(torch.load(mc_path, map_location=Config.DEVICE, weights_only=False))
     
     # Evaluate Uncertainty
     print("Evaluating Uncertainty...")
@@ -153,7 +174,7 @@ def run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_d
     
     # Load best weights
     denoise_path = os.path.join(Config.MODEL_DIR, "denoisingautoencoder.pth")
-    denoising_model.load_state_dict(torch.load(denoise_path))
+    denoising_model.load_state_dict(torch.load(denoise_path, map_location=Config.DEVICE, weights_only=False))
     
     # Robustness Eval
     rob_results = evaluate_robustness({
@@ -161,7 +182,12 @@ def run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_d
         'Denoising': denoising_model
     }, test_loader, epsilon=0.1)
     
-    rob_df = pd.DataFrame(list(rob_results.items()), columns=['Model', 'Reconstruction Error (MSE)'])
+    rob_rows = []
+    for model_name, metrics in rob_results.items():
+        row = {'Model': model_name}
+        row.update(metrics)
+        rob_rows.append(row)
+    rob_df = pd.DataFrame(rob_rows)
     rob_path = os.path.join(Config.RESULTS_DIR, "robustness_results.csv")
     rob_df.to_csv(rob_path, index=False)
     print(f"Robustness results saved to {rob_path}")
@@ -172,19 +198,24 @@ def run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_d
     
     # Card level
     print("Training LSTM (Card-level)...")
-    train_seq, test_seq, fraud_seq = get_sequential_loaders()
-    lstm_model = get_model('lstm')
-    train_model(lstm_model, train_seq, test_seq)
-    
-    # Load best weights
-    lstm_path = os.path.join(Config.MODEL_DIR, "lstmautoencoder.pth")
-    lstm_model.load_state_dict(torch.load(lstm_path))
+    if not os.path.exists(Config.SCALER_PATH) or not os.path.exists(Config.ENCODER_PATH):
+        print("Warning: Scaler/encoder files missing. Run --mode research first. Skipping LSTM training.")
+    else:
+        train_seq, test_seq, fraud_seq = get_sequential_loaders()
+        lstm_model = get_model('lstm')
+        train_model(lstm_model, train_seq, test_seq)
+        
+        lstm_path = os.path.join(Config.MODEL_DIR, "lstmautoencoder.pth")
+        lstm_model.load_state_dict(torch.load(lstm_path, map_location=Config.DEVICE, weights_only=False))
 
     # Merchant level
     print("Training Merchant AE...")
-    merch_train, merch_test = get_merchant_loaders()
-    merch_model = get_model('lstm') # Use LSTM for merchant sequences too
-    train_model(merch_model, merch_train, merch_test)
+    try:
+        merch_train, merch_test = get_merchant_loaders()
+        merch_model = get_model('lstm')
+        train_model(merch_model, merch_train, merch_test, save_name="merchant_lstmautoencoder.pth")
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Warning: Could not create merchant sequences ({e}). Skipping merchant training.")
     
     # 4. Active Learning
     print("\n>>> Task 4: Active Learning Loop <<<")
@@ -223,7 +254,9 @@ def run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_d
     plot_merchant_heatmap(fraud_df, f_errors)
     
     # Cumulative Fraud
-    plot_cumulative_fraud(mc_model, test_df, fraud_df, test_loader, fraud_loader)
+    t_errors = get_reconstruction_errors(mc_model, test_loader)
+    plot_cumulative_fraud(mc_model, test_df, fraud_df, test_loader, fraud_loader,
+                         normal_errors=t_errors, fraud_errors=f_errors)
     
     print("Advanced suite complete.")
 
@@ -236,10 +269,13 @@ def run_interpretability_suite(train_loader, test_loader, fraud_loader):
     # Load best trained model if exists, else train
     if os.path.exists(model_save_path):
         print(f"Loading existing weights for {model_name}...")
-        model.load_state_dict(torch.load(model_save_path))
+        model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE, weights_only=False))
     else:
         train_model(model, train_loader, test_loader)
-        model.load_state_dict(torch.load(model_save_path))
+        if os.path.exists(model_save_path):
+            model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE, weights_only=False))
+        else:
+            print(f"Warning: model file {model_save_path} not saved after training.")
     
     features = Config.FEATURES
     calculate_shap_values(model, train_loader, test_loader, features)
@@ -277,20 +313,44 @@ def main():
     args = parser.parse_args()
     
     logger = TaskLogger()
-    logger.start_task(f"Execution Mode: {args.mode}")
+    start_time = logger.start_task(f"Execution Mode: {args.mode}")
 
     set_seed()
     
     if args.mode == 'research':
-        train_loader, test_loader, fraud_loader, _, _, _, _ = get_dataloaders()
+        train_loader, test_loader, fraud_loader, _, _, _, _ = _get_cached_dataloaders()
         run_research_suite(train_loader, test_loader, fraud_loader)
         print(f"\nResults saved in {Config.RESULTS_DIR} and {Config.VIZ_DIR}")
-        logger.end_task(f"Execution Mode: {args.mode}", success=True)
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
+        
+    elif args.mode == 'advanced':
+        train_loader, test_loader, fraud_loader, X_fraud, train_df, test_df, fraud_df = _get_cached_dataloaders()
+        run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_df, test_df, fraud_df)
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
+        
+    elif args.mode == 'simulation':
+        sim = DriftSimulator()
+        months = sim.simulate_months(num_months=4)
+        viz_path, csv_path = sim.run_drift_experiment(months)
+        print(f"\nSimulation complete!")
+        print(f"Drift Visual: {viz_path}")
+        print(f"Drift Log: {csv_path}")
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
+
+    elif args.mode == 'interpret':
+        train_loader, test_loader, fraud_loader, _, _, _, _ = _get_cached_dataloaders()
+        run_interpretability_suite(train_loader, test_loader, fraud_loader)
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
+
+    elif args.mode == 'ensemble':
+        train_loader, test_loader, fraud_loader, _, _, _, _ = _get_cached_dataloaders()
+        run_ensemble_suite(train_loader, test_loader, fraud_loader)
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
         
     elif args.mode == 'advanced':
         train_loader, test_loader, fraud_loader, X_fraud, train_df, test_df, fraud_df = get_dataloaders()
         run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_df, test_df, fraud_df)
-        logger.end_task(f"Execution Mode: {args.mode}", success=True)
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
         
     elif args.mode == 'simulation':
         sim = DriftSimulator()
@@ -300,18 +360,22 @@ def main():
         print(f"\nSimulation complete!")
         print(f"Drift Visual: {viz_path}")
         print(f"Drift Log: {csv_path}")
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
 
     elif args.mode == 'interpret':
         train_loader, test_loader, fraud_loader, _, _, _, _ = get_dataloaders()
         run_interpretability_suite(train_loader, test_loader, fraud_loader)
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
 
     elif args.mode == 'ensemble':
         train_loader, test_loader, fraud_loader, _, _, _, _ = get_dataloaders()
         run_ensemble_suite(train_loader, test_loader, fraud_loader)
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
 
     elif args.mode == 'ablation':
         from ablation_study import run_ablation
         run_ablation()
+        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
 
 if __name__ == "__main__":
     main()

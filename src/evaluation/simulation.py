@@ -4,6 +4,7 @@ import os
 import torch
 import matplotlib.pyplot as plt
 import pickle
+import shutil
 from src.core.config import Config
 from src.core.data_loader import Preprocessor, FraudDataset, haversine_distance
 from src.core.model import get_model
@@ -17,6 +18,8 @@ class DriftSimulator:
         self.df = pd.read_csv(data_path)
         self.df['trans_date_trans_time'] = pd.to_datetime(self.df['trans_date_trans_time'])
         self.df = self.df.sort_values('trans_date_trans_time')
+        self.baseline_scaler_path = os.path.join(Config.MODEL_DIR, "scaler_month0.pkl")
+        self.baseline_encoder_path = os.path.join(Config.MODEL_DIR, "encoders_month0.pkl")
         
     def simulate_months(self, num_months=6):
         """
@@ -24,6 +27,11 @@ class DriftSimulator:
         """
         months = np.array_split(self.df, num_months)
         return months
+
+    def _save_baseline_artifacts(self):
+        """Save month-0 scaler and encoders so static eval uses correct references."""
+        shutil.copy(Config.SCALER_PATH, self.baseline_scaler_path)
+        shutil.copy(Config.ENCODER_PATH, self.baseline_encoder_path)
 
     def run_drift_experiment(self, months):
         print("\n>>> Starting Concept Drift Simulation <<<")
@@ -34,11 +42,12 @@ class DriftSimulator:
         print("Training Initial Model on Month 0...")
         initial_metrics = self._process_month(0, m0, train=True)
         results.append(initial_metrics)
+        self._save_baseline_artifacts()
         
         initial_model = get_model('standard')
         model_name = initial_model.__class__.__name__.lower()
-        model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name}.pth")
-        initial_model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE))
+        model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name}_month0.pth")
+        initial_model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE, weights_only=False))
         
         # Evaluate on subsequent months
         for i in range(1, len(months)):
@@ -84,7 +93,6 @@ class DriftSimulator:
 
     def _process_month(self, month_idx, df_month, train=True):
         preprocessor = Preprocessor()
-        # fit_transform now returns 6 values
         X_train, X_test, X_fraud, _, _, _ = preprocessor.fit_transform(df_month)
         
         train_loader = DataLoader(FraudDataset(X_train), batch_size=Config.BATCH_SIZE, shuffle=True)
@@ -93,12 +101,13 @@ class DriftSimulator:
         
         model = get_model('standard')
         if train:
-            train_model(model, train_loader, test_loader)
+            model_name = model.__class__.__name__.lower()
+            save_name = f"{model_name}_month{month_idx}.pth"
+            train_model(model, train_loader, test_loader, save_name=save_name)
         
-        # Load best and evaluate
         model_name = model.__class__.__name__.lower()
-        model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name}.pth")
-        model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE))
+        model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name}_month{month_idx}.pth")
+        model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE, weights_only=False))
         test_errors = get_reconstruction_errors(model, test_loader)
         fraud_errors = get_reconstruction_errors(model, fraud_loader)
         
@@ -111,32 +120,31 @@ class DriftSimulator:
         return metrics
 
     def _evaluate_static_model(self, model, df_month):
-        # Use initial scaler
-        with open(Config.SCALER_PATH, 'rb') as f:
+        # Use month-0 baseline scaler and encoders
+        with open(self.baseline_scaler_path, 'rb') as f:
             scaler = pickle.load(f)
 
-        # Preprocess features
         df_month['trans_date_trans_time'] = pd.to_datetime(df_month['trans_date_trans_time'])
         df_month['dob'] = pd.to_datetime(df_month['dob'])
         df_month['age'] = (df_month['trans_date_trans_time'] - df_month['dob']).dt.days // 365
         df_month['hour'] = df_month['trans_date_trans_time'].dt.hour
         df_month['distance_km'] = haversine_distance(df_month['lat'], df_month['long'],
-                                                   df_month['merch_lat'], df_month['merch_long'])
+                                                    df_month['merch_lat'], df_month['merch_long'])
         df_month['amt_log'] = np.log1p(df_month['amt'])
         
-        # Drop columns
         features = Config.FEATURES
         
-        # Load encoders (FIX: Use saved encoders instead of fitting new ones)
-        with open(Config.ENCODER_PATH, 'rb') as f:
+        with open(self.baseline_encoder_path, 'rb') as f:
             encoders = pickle.load(f)
             
         for col in Config.CATEGORICAL_COLS:
-            if col in encoders:
-                df_month[col] = encoders[col].transform(df_month[col].astype(str))
-            else:
-                # Handle unseen labels by filling with a default or most frequent (simplified)
-                df_month[col] = df_month[col].apply(lambda x: encoders[col].transform([x])[0] if x in encoders[col].classes_ else -1)
+            le = encoders.get(col)
+            if le is None:
+                continue
+            raw_vals = df_month[col].astype(str)
+            known = set(le.classes_)
+            safe_vals = raw_vals.apply(lambda x: x if x in known else le.classes_[0])
+            df_month[col] = le.transform(safe_vals)
             
         X = df_month[features].values
         X_scaled = scaler.transform(X)

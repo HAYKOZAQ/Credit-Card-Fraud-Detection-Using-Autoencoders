@@ -35,14 +35,10 @@ class ActiveLearningLab:
             errors = self.get_ae_errors()
         
         for step in range(0, budget, step_size):
-            # Select samples
+            new_indices = []
             if strategy == 'reconstruction_error':
-                # Filter out already labeled
                 candidates_idx = np.where(~labeled_mask)[0]
                 candidates_errors = errors[candidates_idx]
-                
-                # Top k errors
-                # argsort gives ascending, so take last k
                 if len(candidates_errors) < step_size:
                     new_indices = candidates_idx
                 else:
@@ -55,6 +51,8 @@ class ActiveLearningLab:
                     new_indices = candidates_idx
                 else:
                     new_indices = np.random.choice(candidates_idx, step_size, replace=False)
+            else:
+                raise ValueError(f"Unknown active learning strategy: {strategy}")
             
             # Label them
             labeled_mask[new_indices] = True
@@ -69,7 +67,7 @@ class ActiveLearningLab:
                 # Can't train reasonably, score 0
                 score = 0
             else:
-                clf = RandomForestClassifier(n_estimators=50, random_state=42)
+                clf = RandomForestClassifier(n_estimators=50, random_state=Config.SEED)
                 clf.fit(X_train, y_train)
                 # Predict
                 probs = clf.predict_proba(self.X_test)[:, 1]

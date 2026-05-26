@@ -8,19 +8,25 @@ from src.core.config import Config
 from src.core.model import get_model
 from src.evaluation.explain import FraudExplainer
 
+scaler = None
+model = None
+explainer = None
+encoders = None
+
 # Load Assets
 try:
     with open(Config.SCALER_PATH, 'rb') as f:
         scaler = pickle.load(f)
+    with open(Config.ENCODER_PATH, 'rb') as f:
+        encoders = pickle.load(f)
 
     model = get_model('standard')
     model_name = model.__class__.__name__.lower()
     model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name}.pth")
-    model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE))
+    model.load_state_dict(torch.load(model_save_path, map_location=Config.DEVICE, weights_only=False))
     model.to(Config.DEVICE)
     model.eval()
     
-    # Try to load real background sample
     bg_path = os.path.join(Config.MODEL_DIR, "background_sample.pkl")
     if os.path.exists(bg_path):
         with open(bg_path, 'rb') as f:
@@ -29,18 +35,37 @@ try:
         background_data = np.zeros((50, Config.INPUT_DIM)) 
         
     explainer = FraudExplainer(model, background_data)
+except FileNotFoundError as e:
+    print(f"Startup: Required file not found: {e}")
+    print("Please run 'python main.py --mode research' first to generate model files.")
 except Exception as e:
-    print(f"Startup Warning: {e}")
+    print(f"Startup Error: {e}")
+    print("Model loading failed. Check traceback above for details (e.g., PyTorch version, corrupted files).")
 
-THRESHOLD = 1.6447
+THRESHOLD = None
+
+def get_default_threshold():
+    from src.core.data_loader import get_dataloaders
+    from src.evaluation.evaluate import get_reconstruction_errors
+    try:
+        _, test_loader, _, _, _, _, _ = get_dataloaders()
+        errors = get_reconstruction_errors(model, test_loader)
+        return np.mean(errors) + 3 * np.std(errors)
+    except Exception:
+        return 1.65
+
+THRESHOLD = get_default_threshold() if model is not None else 1.65
 FEATURE_NAMES = ['category', 'job', 'city_pop', 'age', 'hour', 'distance_km', 'amt_log']
 
 def predict_and_explain(category, job, city_pop, age, hour, distance_km, amt):
-    # 1. Preprocess
+    if scaler is None or model is None or encoders is None:
+        return "Error: Model not loaded. Run main.py first.", {}, None
+
+    cat_val = encoders['category'].transform([str(category)])[0] if str(category) in encoders['category'].classes_ else 0
+    job_val = encoders['job'].transform([str(job)])[0] if str(job) in encoders['job'].classes_ else 0
     amt_log = np.log1p(amt)
-    features = np.array([[category, job, city_pop, age, hour, distance_km, amt_log]])
+    features = np.array([[cat_val, job_val, city_pop, age, hour, distance_km, amt_log]])
     
-    # 2. Scale
     features_scaled = scaler.transform(features)
     features_tensor = torch.FloatTensor(features_scaled).to(Config.DEVICE)
     
@@ -55,8 +80,11 @@ def predict_and_explain(category, job, city_pop, age, hour, distance_km, amt):
     # 4. Generate SHAP if fraud
     explanation_fig = None
     if is_fraud:
-        plot_path, _ = explainer.explain_instance(features_scaled[0], FEATURE_NAMES)
-        explanation_fig = plot_path
+        if explainer is not None:
+            plot_path, _ = explainer.explain_instance(features_scaled[0], FEATURE_NAMES)
+            explanation_fig = plot_path
+        else:
+            result_text += " (Explainability unavailable)"
     
     details = {
         "Anomaly Score": round(error, 4),

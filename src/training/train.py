@@ -11,24 +11,28 @@ def vae_loss_function(recon_x, x, mu, logvar):
     KLD = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1))
     return MSE + Config.BETA * KLD
 
-def nt_xent_loss(z, temperature=0.5):
+def nt_xent_loss(z1, z2, temperature=0.5):
     """
     Normalized Temperature-scaled Cross Entropy Loss for Contrastive Learning.
+    z1, z2: two augmented views of the same batch [batch_size, latent_dim].
+    Positive pairs: corresponding samples across views (diagonal).
     """
-    z = nn.functional.normalize(z, dim=1)
-    batch_size = z.shape[0]
-    similarity_matrix = torch.matmul(z, z.T)
-    
-    # Masks for positive pairs (we'll just use the diagonal for self-similarity if no augmentations)
-    # Ideally we'd have two views, but for simplicity on tabular, we can use a small perturbation.
-    mask = torch.eye(batch_size, device=z.device).bool()
-    similarity_matrix = similarity_matrix / temperature
-    
-    # We want to pull together similar samples. If no labels, this is hard.
-    # Usually we use perturbations. Let's assume z is a batch of (z1, z2)
-    # For now, a very simple version:
-    exp_sim = torch.exp(similarity_matrix)
-    return -torch.log(exp_sim.diag() / exp_sim.sum(dim=1)).mean()
+    z1 = nn.functional.normalize(z1, dim=1)
+    z2 = nn.functional.normalize(z2, dim=1)
+    batch_size = z1.shape[0]
+    representations = torch.cat([z1, z2], dim=0)
+    similarity_matrix = torch.matmul(representations, representations.T) / temperature
+    mask = torch.eye(2 * batch_size, device=z1.device).bool()
+    logits_max, _ = similarity_matrix.max(dim=1, keepdim=True)
+    logits = similarity_matrix - logits_max.detach()
+    exp_logits = torch.exp(logits) * (~mask)
+    log_prob = logits - torch.log(exp_logits.sum(dim=1, keepdim=True))
+    pos_pairs = torch.cat([
+        torch.arange(batch_size, 2 * batch_size),
+        torch.arange(batch_size)
+    ], dim=0)
+    loss = -log_prob[torch.arange(2 * batch_size), pos_pairs].mean()
+    return loss
 
 def log_experiment(model_name, history, metrics=None):
     log_path = os.path.join(Config.RESULTS_DIR, "experiments.json")
@@ -44,12 +48,13 @@ def log_experiment(model_name, history, metrics=None):
         with open(log_path, 'r') as f:
             try:
                  logs = json.load(f)
-            except: pass
+            except (json.JSONDecodeError, ValueError):
+                 print(f"Warning: Corrupt experiment log at {log_path}, creating new log.")
     logs.append(entry)
     with open(log_path, 'w') as f:
         json.dump(logs, f, indent=4)
 
-def train_model(model, train_loader, val_loader, epochs=None, adv_train=False):
+def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, save_name=None):
     optimizer = optim.Adam(model.parameters(), lr=Config.LEARNING_RATE)
     criterion = nn.MSELoss()
     
@@ -90,13 +95,18 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False):
                 recon_x, mu, logvar = model(inputs)
                 loss = vae_loss_function(recon_x, targets, mu, logvar)
             elif is_contrastive:
-                recon_x, z = model(inputs)
+                inputs_a = inputs + torch.randn_like(inputs) * 0.05
+                inputs_b = inputs + torch.randn_like(inputs) * 0.05
+                recon_x, z_a = model(inputs_a)
+                _, z_b = model(inputs_b)
                 loss_recon = criterion(recon_x, targets)
-                loss_cont = nt_xent_loss(z)
+                loss_cont = nt_xent_loss(z_a, z_b)
                 loss = loss_recon + 0.1 * loss_cont
             elif is_graph:
-                # Identity matrix as simple adj for tabular batch
-                adj = torch.eye(inputs.size(0), device=Config.DEVICE)
+                dists = torch.cdist(inputs, inputs)
+                sigma = dists.mean()
+                adj = torch.exp(-dists / (sigma + 1e-8))
+                adj = adj / adj.sum(dim=1, keepdim=True)
                 recon_x, _ = model(inputs, adj)
                 loss = criterion(recon_x, targets)
             else:
@@ -120,9 +130,12 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False):
                     loss = vae_loss_function(recon_x, targets, mu, logvar)
                 elif is_contrastive:
                     recon_x, z = model(inputs)
-                    loss = criterion(recon_x, targets) + 0.1 * nt_xent_loss(z)
+                    loss = criterion(recon_x, targets)
                 elif is_graph:
-                    adj = torch.eye(inputs.size(0), device=Config.DEVICE)
+                    dists = torch.cdist(inputs, inputs)
+                    sigma = dists.mean()
+                    adj = torch.exp(-dists / (sigma + 1e-8))
+                    adj = adj / adj.sum(dim=1, keepdim=True)
                     recon_x, _ = model(inputs, adj)
                     loss = criterion(recon_x, targets)
                 else:
@@ -137,7 +150,8 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False):
         
         if val_loss < best_loss:
             best_loss = val_loss
-            model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name.lower()}.pth")
+            save_filename = save_name if save_name else f"{model_name.lower()}.pth"
+            model_save_path = os.path.join(Config.MODEL_DIR, save_filename)
             torch.save(model.state_dict(), model_save_path)
                 
     log_experiment(model_name, history)
