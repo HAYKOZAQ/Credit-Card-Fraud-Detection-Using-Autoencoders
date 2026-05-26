@@ -341,5 +341,33 @@
         "epochs": 30,
         "final_val_loss": 0.6699413329360664,
         "metrics": null
+    },
+    {
+        "timestamp": "Tue May 26 17:22:42 2026",
+        "model": "MCDropoutAutoencoder",
+        "epochs": 30,
+        "final_val_loss": 0.7416959967812946,
+        "metrics": null
+    },
+    {
+        "timestamp": "Tue May 26 17:25:21 2026",
+        "model": "DenoisingAutoencoder",
+        "epochs": 30,
+        "final_val_loss": 0.4336839580460021,
+        "metrics": null
+    },
+    {
+        "timestamp": "Tue May 26 17:42:49 2026",
+        "model": "LSTMAutoencoder",
+        "epochs": 30,
+        "final_val_loss": 0.491783350041787,
+        "metrics": null
+    },
+    {
+        "timestamp": "Tue May 26 17:54:08 2026",
+        "model": "LSTMAutoencoder",
+        "epochs": 30,
+        "final_val_loss": 0.5163602623504971,
+        "metrics": null
     }
 ]

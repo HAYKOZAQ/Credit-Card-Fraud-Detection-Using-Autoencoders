@@ -1,3 +1,3 @@
-Model,Reconstruction Error (MSE)
-MC Dropout,"{'Clean Mean Error': np.float32(0.6559896), 'Adversarial Mean Error': np.float32(0.78328395), 'Sensitivity (Adv/Clean)': np.float32(1.1940494)}"
-Denoising,"{'Clean Mean Error': np.float32(0.36221758), 'Adversarial Mean Error': np.float32(0.45557427), 'Sensitivity (Adv/Clean)': np.float32(1.2577366)}"
+Model,Clean Mean Error,Adversarial Mean Error (Max),Evasion Mean Error (Min),Sensitivity (Max/Clean),Evasion Resistance (Min/Clean)
+MC Dropout,0.71674174,0.85251933,0.59946847,1.1894373,0.83638
+Denoising,0.4335032,0.5444031,0.33998376,1.2558224,0.78427047
