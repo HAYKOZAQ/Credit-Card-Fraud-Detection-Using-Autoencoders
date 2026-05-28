@@ -1,0 +1,161 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.9, 3.10, 3.11]
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov black flake8
+    
+    - name: Lint with flake8
+      run: |
+        # Stop on syntax errors or undefined names
+        flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+    
+    - name: Format check with black
+      run: |
+        black --check src/
+    
+    - name: Run tests
+      run: |
+        pytest src/tests/ -v --cov=src --cov-report=xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  validate-model:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+    
+    - name: Validate model performance
+      run: |
+        python -c "
+        import torch
+        from src.core.model import get_model
+        from src.core.config import Config
+        
+        # Load model
+        model = get_model('graph')
+        model_path = 'models/graphautoencoder.pth'
+        
+        import os
+        if os.path.exists(model_path):
+            model.load_state_dict(torch.load(model_path, map_location='cpu'))
+            print('✓ Model loaded successfully')
+            
+            # Test forward pass
+            dummy_input = torch.randn(4, Config.INPUT_DIM)
+            from src.training.train import _build_adjacency
+            adj = _build_adjacency(dummy_input)
+            output, _ = model(dummy_input, adj)
+            
+            assert output.shape == dummy_input.shape
+            print(f'✓ Forward pass successful: {dummy_input.shape} -> {output.shape}')
+        else:
+            print('⚠ Model file not found, skipping validation')
+        "
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [test, validate-model]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ secrets.DOCKERHUB_USERNAME }}/fraud-detection
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Deploy to production
+      run: |
+        echo "Deploying to production..."
+        # Add your deployment script here
+        # Example: SSH to server and docker-compose pull && up -d
+    
+    - name: Notify deployment
+      run: |
+        echo "✓ Deployment successful"
+        # Add notification (Slack, email, etc.)

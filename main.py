@@ -2,32 +2,36 @@ import torch
 import random
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import os
 import argparse
 import pickle
 import matplotlib.pyplot as plt
 
-_cached_dataloaders = None
-
-def _get_cached_dataloaders():
-    global _cached_dataloaders
-    if _cached_dataloaders is None:
-        _cached_dataloaders = get_dataloaders()
-    return _cached_dataloaders
 from src.core.config import Config
-from src.core.data_loader import get_dataloaders, get_sequential_loaders
+from src.core.data_loader import get_dataloaders, get_sequential_loaders, get_merchant_loaders
 from src.core.model import get_model
 from src.training.train import train_model
 from src.evaluation.evaluate import get_reconstruction_errors, plot_history, get_uncertainty_scores, plot_uncertainty_vs_error, plot_latent_tsne, plot_merchant_heatmap, plot_cumulative_fraud, plot_feature_importance, calculate_shap_values, ensemble_scoring
 from src.evaluation.baselines import Baselines
-from src.core.metrics import FraudEvaluator
 from src.evaluation.hybrid import HybridModel
+from src.core.metrics import FraudEvaluator
 from src.evaluation.simulation import DriftSimulator
 from src.evaluation.robustness import evaluate_robustness
 from src.training.active_learning import ActiveLearningLab
-from src.core.data_loader import get_merchant_loaders
 from src.utils.task_logger import TaskLogger
+
+_dataloader_cache = {"data": None, "failed": False}
+
+def _get_cached_dataloaders():
+    if _dataloader_cache["data"] is None:
+        if _dataloader_cache["failed"]:
+            _dataloader_cache["failed"] = False
+        try:
+            _dataloader_cache["data"] = get_dataloaders()
+        except Exception as e:
+            _dataloader_cache["failed"] = True
+            raise RuntimeError(f"Failed to load data: {e}. Retry by calling again.") from e
+    return _dataloader_cache["data"]
 
 def set_seed(seed=Config.SEED):
     random.seed(seed)
@@ -85,7 +89,24 @@ def run_research_suite(train_loader, test_loader, fraud_loader):
     for ae_type in ['standard', 'vae', 'denoising', 'contrastive', 'graph']:
         print(f"\n>>> Running Experiment: {ae_type.upper()} <<<")
         model = get_model(ae_type)
-        history = train_model(model, train_loader, test_loader)
+        
+        if ae_type == 'graph':
+            try:
+                from src.core.data_loader import get_pyg_loaders
+                pyg_train, pyg_test, pyg_fraud = get_pyg_loaders()
+                history = train_model(model, pyg_train, pyg_test)
+                current_test_loader = pyg_test
+                current_fraud_loader = pyg_fraud
+            except ImportError:
+                print("Skipping Graph Autoencoder (torch-geometric not installed).")
+                continue
+            except Exception as e:
+                print(f"Skipping Graph Autoencoder ({e}).")
+                continue
+        else:
+            history = train_model(model, train_loader, test_loader)
+            current_test_loader = test_loader
+            current_fraud_loader = fraud_loader
         
         model_name = model.__class__.__name__.lower()
         model_save_path = os.path.join(Config.MODEL_DIR, f"{model_name}.pth")
@@ -94,8 +115,8 @@ def run_research_suite(train_loader, test_loader, fraud_loader):
         # Save training history plots
         plot_history(history, model_name=ae_type)
         
-        test_errors = get_reconstruction_errors(model, test_loader)
-        fraud_errors = get_reconstruction_errors(model, fraud_loader)
+        test_errors = get_reconstruction_errors(model, current_test_loader)
+        fraud_errors = get_reconstruction_errors(model, current_fraud_loader)
         y_true = [0] * len(test_errors) + [1] * len(fraud_errors)
         y_scores = np.concatenate([test_errors, fraud_errors])
         
@@ -110,15 +131,35 @@ def run_research_suite(train_loader, test_loader, fraud_loader):
         if ae_type == 'standard':
             plot_feature_importance(model, fraud_loader, Config.FEATURES)
 
+    # 2.5 Hybrid Model Experiment
+    print("\n>>> Running Experiment: HYBRID (Standard AE Embeddings + XGBoost) <<<")
+    std_model = get_model('standard')
+    std_save_path = os.path.join(Config.MODEL_DIR, "autoencoder.pth")
+    if os.path.exists(std_save_path):
+        std_model.load_state_dict(torch.load(std_save_path, map_location=Config.DEVICE, weights_only=False))
+        hybrid = HybridModel(std_model)
+        
+        from torch.utils.data import DataLoader, TensorDataset
+        bench_train_dataset = TensorDataset(torch.FloatTensor(X_bench_train), torch.FloatTensor(X_bench_train))
+        bench_train_loader = DataLoader(bench_train_dataset, batch_size=Config.BATCH_SIZE, shuffle=False)
+        bench_test_dataset = TensorDataset(torch.FloatTensor(X_bench_test), torch.FloatTensor(X_bench_test))
+        bench_test_loader = DataLoader(bench_test_dataset, batch_size=Config.BATCH_SIZE, shuffle=False)
+        
+        X_train_emb = hybrid.get_embeddings(bench_train_loader)
+        X_test_emb = hybrid.get_embeddings(bench_test_loader)
+        
+        _, hybrid_probs = hybrid.train_classifier(X_train_emb, y_bench_train, X_test_emb)
+        hybrid_metrics, _ = FraudEvaluator.calculate_metrics(y_bench_test, hybrid_probs)
+        hybrid_metrics['Model'] = 'Hybrid AE+XGB'
+        results.append(hybrid_metrics)
+        print(f"Hybrid Model Metrics: AUPRC={hybrid_metrics['AUPRC']:.4f}, AUROC={hybrid_metrics['AUROC']:.4f}, Cost=${hybrid_metrics['Total Cost ($)']}")
+
     # 3. Final Comparison
     df_results = pd.DataFrame(results)
     print("\n" + "="*60)
     print("RESEARCH REPORT SUMMARY")
     print("="*60)
     print(df_results[['Model', 'AUPRC', 'AUROC', 'Total Cost ($)']])
-    
-    csv_path = os.path.join(Config.RESULTS_DIR, "research_metrics.csv")
-    df_results.to_csv(csv_path, index=False)
     
     csv_path = os.path.join(Config.RESULTS_DIR, "research_metrics.csv")
     df_results.to_csv(csv_path, index=False)
@@ -139,8 +180,6 @@ def run_research_suite(train_loader, test_loader, fraud_loader):
     return df_results
 
 def run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_df, test_df, fraud_df):
-    results = []
-    
     # 1. Uncertainty Quantification
     print("\n>>> Task 1: Uncertainty Quantification (MC Dropout) <<<")
     mc_model = get_model('mc_dropout')
@@ -207,6 +246,57 @@ def run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_d
         
         lstm_path = os.path.join(Config.MODEL_DIR, "lstmautoencoder.pth")
         lstm_model.load_state_dict(torch.load(lstm_path, map_location=Config.DEVICE, weights_only=False))
+        
+        # Evaluate LSTM
+        print("Evaluating Card-level LSTM Autoencoder...")
+        test_lstm_errors = get_reconstruction_errors(lstm_model, test_seq)
+        fraud_lstm_errors = get_reconstruction_errors(lstm_model, fraud_seq)
+        y_true_lstm = [0] * len(test_lstm_errors) + [1] * len(fraud_lstm_errors)
+        y_scores_lstm = np.concatenate([test_lstm_errors, fraud_lstm_errors])
+        lstm_metrics, _ = FraudEvaluator.calculate_metrics(y_true_lstm, y_scores_lstm)
+        print(f"Card-level LSTM AE Metrics: AUPRC={lstm_metrics['AUPRC']:.4f}, AUROC={lstm_metrics['AUROC']:.4f}, Cost=${lstm_metrics['Total Cost ($)']}")
+        
+        # Save sequence metrics to csv
+        seq_df = pd.DataFrame([{
+            'Model': 'LSTM Card-level',
+            'AUPRC': lstm_metrics['AUPRC'],
+            'AUROC': lstm_metrics['AUROC'],
+            'Total Cost ($)': lstm_metrics['Total Cost ($)'],
+            'Recall': lstm_metrics['Recall'],
+            'Precision': lstm_metrics['Precision']
+        }])
+        seq_csv_path = os.path.join(Config.RESULTS_DIR, "sequence_metrics.csv")
+        seq_df.to_csv(seq_csv_path, index=False)
+        print(f"Sequence metrics saved to {seq_csv_path}")
+
+        # Train Transformer
+        print("Training Transformer (Card-level)...")
+        transformer_model = get_model('transformer')
+        train_model(transformer_model, train_seq, test_seq, save_name="transformerautoencoder.pth")
+        
+        transformer_path = os.path.join(Config.MODEL_DIR, "transformerautoencoder.pth")
+        transformer_model.load_state_dict(torch.load(transformer_path, map_location=Config.DEVICE, weights_only=False))
+        
+        # Evaluate Transformer
+        print("Evaluating Card-level Transformer Autoencoder...")
+        test_trans_errors = get_reconstruction_errors(transformer_model, test_seq)
+        fraud_trans_errors = get_reconstruction_errors(transformer_model, fraud_seq)
+        y_scores_trans = np.concatenate([test_trans_errors, fraud_trans_errors])
+        trans_metrics, _ = FraudEvaluator.calculate_metrics(y_true_lstm, y_scores_trans)
+        print(f"Card-level Transformer AE Metrics: AUPRC={trans_metrics['AUPRC']:.4f}, AUROC={trans_metrics['AUROC']:.4f}, Cost=${trans_metrics['Total Cost ($)']}")
+        
+        # Append Transformer metrics
+        trans_df = pd.DataFrame([{
+            'Model': 'Transformer Card-level',
+            'AUPRC': trans_metrics['AUPRC'],
+            'AUROC': trans_metrics['AUROC'],
+            'Total Cost ($)': trans_metrics['Total Cost ($)'],
+            'Recall': trans_metrics['Recall'],
+            'Precision': trans_metrics['Precision']
+        }])
+        seq_df = pd.concat([seq_df, trans_df], ignore_ignore=True) if 'ignore_index' not in globals() else pd.concat([seq_df, trans_df], ignore_index=True)
+        seq_df.to_csv(seq_csv_path, index=False)
+        print(f"Transformer metrics appended to {seq_csv_path}")
 
     # Merchant level
     print("Training Merchant AE...")
@@ -344,31 +434,6 @@ def main():
 
     elif args.mode == 'ensemble':
         train_loader, test_loader, fraud_loader, _, _, _, _ = _get_cached_dataloaders()
-        run_ensemble_suite(train_loader, test_loader, fraud_loader)
-        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
-        
-    elif args.mode == 'advanced':
-        train_loader, test_loader, fraud_loader, X_fraud, train_df, test_df, fraud_df = get_dataloaders()
-        run_advanced_suite(train_loader, test_loader, fraud_loader, X_fraud, train_df, test_df, fraud_df)
-        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
-        
-    elif args.mode == 'simulation':
-        sim = DriftSimulator()
-        months = sim.simulate_months(num_months=4)
-        viz_path, csv_path = sim.run_drift_experiment(months)
-        print(f"\nSimulation complete!")
-        print(f"\nSimulation complete!")
-        print(f"Drift Visual: {viz_path}")
-        print(f"Drift Log: {csv_path}")
-        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
-
-    elif args.mode == 'interpret':
-        train_loader, test_loader, fraud_loader, _, _, _, _ = get_dataloaders()
-        run_interpretability_suite(train_loader, test_loader, fraud_loader)
-        logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
-
-    elif args.mode == 'ensemble':
-        train_loader, test_loader, fraud_loader, _, _, _, _ = get_dataloaders()
         run_ensemble_suite(train_loader, test_loader, fraud_loader)
         logger.end_task(f"Execution Mode: {args.mode}", start_time=start_time)
 

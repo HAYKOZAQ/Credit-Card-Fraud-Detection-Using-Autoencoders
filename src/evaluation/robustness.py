@@ -21,7 +21,12 @@ def generate_adversarial_examples(model, data_loader, epsilon=0.1, mode='maximiz
         inputs = inputs.to(Config.DEVICE)
         inputs.requires_grad = True
         
-        outputs = model(inputs)
+        if model.__class__.__name__ == 'GraphAutoencoder':
+            n_nodes = inputs.shape[0]
+            edge_index = torch.stack([torch.arange(n_nodes), torch.arange(n_nodes)]).to(Config.DEVICE)
+            outputs = model(inputs, edge_index)
+        else:
+            outputs = model(inputs)
         if isinstance(outputs, tuple): outputs = outputs[0]
         
         loss = criterion(outputs, inputs)

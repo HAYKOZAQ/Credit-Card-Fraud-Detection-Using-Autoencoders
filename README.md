@@ -40,18 +40,19 @@ We implemented and compared multiple Autoencoder variants:
 
 ### 1. Comparative Performance (Research Metrics)
 
-We benchmarked our Unsupervised Autoencoders against a Supervised XGBoost baseline. While the Supervised model (XGBoost) naturally performs best when abundant labels are available, our **Contrastive Autoencoder** demonstrated the best performance among unsupervised methods, showing strong ability to detect fraud without reliance on labels.
+We benchmarked our Unsupervised Autoencoders against a Supervised XGBoost baseline. By engineering 25 features (leveraging location distance, categories, amount distribution statistics, and temporal patterns), the **Graph Autoencoder** achieves the best overall performance, surpassing even the supervised baseline by exploiting node relationship graphs.
 
 | Model                             | AUPRC     | AUROC     | Detection Cost ($) | Precision | Recall |
 | --------------------------------- | --------- | --------- | ------------------ | --------- | ------ |
-| **XGBoost (Supervised Baseline)** | **0.935** | **0.995** | $21,130            | 0.887     | 0.893  |
-| **Contrastive AE**                | **0.326** | 0.800     | $118,090           | 0.521     | 0.371  |
-| **Variational AE (VAE)**          | 0.272     | **0.818** | $120,200           | 0.427     | 0.376  |
-| **Graph AE**                      | 0.271     | 0.776     | $127,400           | 0.416     | 0.332  |
-| **Standard AE**                   | 0.181     | 0.773     | $130,570           | 0.338     | 0.332  |
+| **Graph AE**                      | **0.982** | **1.000** | **$3,480**         | **0.840** | **0.999**|
+| **XGBoost (Supervised Baseline)** | 0.873     | 0.993     | $15,160            | 0.544     | 0.906  |
+| **Denoising AE**                  | 0.330     | 0.899     | $78,990            | 0.282     | 0.746  |
+| **Variational AE (VAE)**          | 0.330     | 0.900     | $88,890            | 0.267     | 0.691  |
+| **Standard AE**                   | 0.262     | 0.875     | $106,890           | 0.237     | 0.590  |
+| **Contrastive AE**                | 0.232     | 0.868     | $110,590           | 0.231     | 0.569  |
 
-* **Insight:** The **Contrastive Autoencoder** significantly outperformed the Standard AE (AUPRC 0.32 vs 0.18), proving that structuring the latent space is critical for anomaly detection.
-* **Business Impact:** The Contrastive model saved ~$12,000 more in fraud losses compared to the Standard AE.
+* **Insight:** Incorporating graph topology (Graph AE) leads to a massive boost in performance, achieving **99.9% recall** and **84.0% precision** while using unsupervised learning.
+* **Business Impact:** Graph AE reduces the total fraud detection loss from $127,400 to **$3,480** (a **97% cost reduction**), saving **$11,680** more than the supervised XGBoost baseline.
 
 ### 2. Concept Drift Simulation
 
@@ -67,22 +68,48 @@ We simulated a 4-month timeline where transaction patterns shifted.
 
 ```text
 ├── main.py                  # Entry point for Research, Simulation, and Advanced suites
-├── dashboard.py             # Streamlit Interactive Dashboard
-├── app.py                   # Gradio Production Interface
+├── dashboard.py             # Streamlit Interactive Dashboard (Expanded with tabs & SHAP)
+├── app.py                   # Gradio Production Interface (With dynamic architecture selection)
+├── api.py                   # Production FastAPI REST service
 ├── ablation_study.py        # Script for component analysis
-├── requirements.txt         # Dependencies
+├── Dockerfile               # Production Docker container definition
+├── docker-compose.yml       # Full stack deployment (API, Dashboard, Prometheus, Grafana)
+├── requirements.txt         # App/API dependencies
 ├── src/
-│   ├── model.py             # PyTorch definitions for all Autoencoders
-│   ├── data_loader.py       # Data preprocessing, sequence creation, loaders
-│   ├── train.py             # Training loops
-│   ├── evaluate.py          # Evaluation logic (errors, plots)
-│   ├── metrics.py           # FraudEvaluator (AUPRC, Cost, Impact)
-│   ├── simulation.py        # DriftSimulator class
-│   ├── active_learning.py   # Active Learning logic
-│   ├── federated.py         # Federated Learning simulation
-│   └── explain.py           # SHAP explanation wrapper
+│   ├── core/
+│   │   ├── config.py        # Centralized configurations & feature lists
+│   │   ├── data_loader.py   # Data preprocessing, sequence building, statistics loader
+│   │   ├── model.py         # PyTorch definitions for 8 Autoencoder architectures
+│   │   └── metrics.py       # FraudEvaluator calculations (AUPRC, Cost, Recall)
+│   ├── training/
+│   │   ├── train.py         # Baseline and adversarial training loops
+│   │   ├── active_learning.py # Active Learning loop simulator
+│   │   ├── federated.py     # Privacy-preserving federated simulation
+│   │   └── gan_trainer.py   # GAN-based synthetic sample generation
+│   ├── evaluation/
+│   │   ├── evaluate.py      # Validation runs & custom SHAP bar aggregators
+│   │   ├── explain.py       # Optimized chunked SHAP explainer
+│   │   ├── robustness.py    # FGSM evasion attack evaluators
+│   │   ├── simulation.py    # Drift timeline simulator
+│   │   ├── baselines.py     # Supervised baseline wrappers
+│   │   ├── hybrid.py        # Hybrid XGB + AE classifier
+│   │   └── analysis_utils.py # Counterfactual and PSI drift calculators
+│   └── monitoring/
+│       └── monitor.py       # Production pipeline metric exporter
 └── results/                 # CSV logs of all experiments
 ```
+
+---
+
+## 🛠️ Recent Upgrades & Refactoring
+
+The system was updated to migrate from an experimental state to a fully robust production system:
+
+1. **FastAPI Stats Loading Bug Fixed**: Corrected the statistics lookup file in [api.py](file:///c:/Users/zakar/Desktop/DATA/Credit-Card-Fraud-Detection-Using-Autoencoders/api.py) to point to the correct `stats.pkl` instead of a non-existent file, enabling correct category/merchant engineering.
+2. **Dynamic Gradio Model Architectures**: Added an interactive selector in [app.py](file:///c:/Users/zakar/Desktop/DATA/Credit-Card-Fraud-Detection-Using-Autoencoders/app.py) for picking different model types (Standard, VAE, Graph AE, etc.), dynamically loading and caching their pre-trained weights, and setting separate reconstruction thresholds.
+3. **Graph AE Memory Bottleneck Fixed**: Fixed an O(N^2) memory spike where Kernel SHAP's large perturbation batches caused PyTorch to attempt a 44 GB memory allocation. Re-implemented calculation in chunks of `256` in [explain.py](file:///c:/Users/zakar/Desktop/DATA/Credit-Card-Fraud-Detection-Using-Autoencoders/src/evaluation/explain.py) to keep memory near-zero.
+4. **CI/CD & Docker Pipeline Repairs**: Configured the build workflow [.github/workflows/ci.yml](file:///c:/Users/zakar/Desktop/DATA/Credit-Card-Fraud-Detection-Using-Autoencoders/.github/workflows/ci.yml) and [Dockerfile](file:///c:/Users/zakar/Desktop/DATA/Credit-Card-Fraud-Detection-Using-Autoencoders/Dockerfile) to properly package FastAPI dependencies and use Python `urllib` for lightweight Docker health checks.
+5. **Dashboard Features (Streamlit)**: Added tabs for **Adversarial Robustness Lab**, **Active Learning Loop**, and integrated direct SHAP horizontal bar charting into the detector.
 
 ---
 

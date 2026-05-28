@@ -11,3 +11,7 @@ shap
 xgboost
 streamlit
 scipy
+fastapi
+uvicorn[standard]
+python-multipart
+torch-geometric

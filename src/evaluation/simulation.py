@@ -20,18 +20,29 @@ class DriftSimulator:
         self.df = self.df.sort_values('trans_date_trans_time')
         self.baseline_scaler_path = os.path.join(Config.MODEL_DIR, "scaler_month0.pkl")
         self.baseline_encoder_path = os.path.join(Config.MODEL_DIR, "encoders_month0.pkl")
+        self.baseline_stats_path = os.path.join(Config.MODEL_DIR, "stats_month0.pkl")
+        self.baseline_stats = None
         
     def simulate_months(self, num_months=6):
         """
         Split data into approximately monthly segments.
         """
-        months = np.array_split(self.df, num_months)
+        # Use pandas split to ensure DataFrames are returned
+        chunk_size = len(self.df) // num_months
+        months = []
+        for i in range(num_months):
+            start_idx = i * chunk_size
+            end_idx = start_idx + chunk_size if i < num_months - 1 else len(self.df)
+            months.append(self.df.iloc[start_idx:end_idx].copy())
         return months
 
     def _save_baseline_artifacts(self):
-        """Save month-0 scaler and encoders so static eval uses correct references."""
+        """Save month-0 scaler, encoders, and statistics so static eval uses correct references."""
         shutil.copy(Config.SCALER_PATH, self.baseline_scaler_path)
         shutil.copy(Config.ENCODER_PATH, self.baseline_encoder_path)
+        if self.baseline_stats is not None:
+            with open(self.baseline_stats_path, 'wb') as f:
+                pickle.dump(self.baseline_stats, f)
 
     def run_drift_experiment(self, months):
         print("\n>>> Starting Concept Drift Simulation <<<")
@@ -42,7 +53,6 @@ class DriftSimulator:
         print("Training Initial Model on Month 0...")
         initial_metrics = self._process_month(0, m0, train=True)
         results.append(initial_metrics)
-        self._save_baseline_artifacts()
         
         initial_model = get_model('standard')
         model_name = initial_model.__class__.__name__.lower()
@@ -92,8 +102,35 @@ class DriftSimulator:
         return img_path, csv_path
 
     def _process_month(self, month_idx, df_month, train=True):
+        scaler_backup = Config.SCALER_PATH + ".drift_bak"
+        encoder_backup = Config.ENCODER_PATH + ".drift_bak"
+        had_scaler = os.path.exists(Config.SCALER_PATH)
+        had_encoder = os.path.exists(Config.ENCODER_PATH)
+        if had_scaler:
+            shutil.copy(Config.SCALER_PATH, scaler_backup)
+        if had_encoder:
+            shutil.copy(Config.ENCODER_PATH, encoder_backup)
+
         preprocessor = Preprocessor()
         X_train, X_test, X_fraud, _, _, _ = preprocessor.fit_transform(df_month)
+        
+        # Store statistics from month 0 for use in static evaluation
+        if month_idx == 0:
+            self.baseline_stats = {
+                'merchant_stats': preprocessor.merchant_stats,
+                'category_stats': preprocessor.category_stats,
+                'state_stats': preprocessor.state_stats
+            }
+
+        if month_idx == 0:
+            self._save_baseline_artifacts()
+        else:
+            if had_scaler:
+                shutil.copy(scaler_backup, Config.SCALER_PATH)
+                os.remove(scaler_backup)
+            if had_encoder:
+                shutil.copy(encoder_backup, Config.ENCODER_PATH)
+                os.remove(encoder_backup)
         
         train_loader = DataLoader(FraudDataset(X_train), batch_size=Config.BATCH_SIZE, shuffle=True)
         test_loader = DataLoader(FraudDataset(X_test), batch_size=Config.BATCH_SIZE)
@@ -120,17 +157,21 @@ class DriftSimulator:
         return metrics
 
     def _evaluate_static_model(self, model, df_month):
-        # Use month-0 baseline scaler and encoders
+        # Use month-0 baseline scaler, encoders, and statistics
         with open(self.baseline_scaler_path, 'rb') as f:
             scaler = pickle.load(f)
+        
+        with open(self.baseline_stats_path, 'rb') as f:
+            baseline_stats = pickle.load(f)
 
-        df_month['trans_date_trans_time'] = pd.to_datetime(df_month['trans_date_trans_time'])
-        df_month['dob'] = pd.to_datetime(df_month['dob'])
-        df_month['age'] = (df_month['trans_date_trans_time'] - df_month['dob']).dt.days // 365
-        df_month['hour'] = df_month['trans_date_trans_time'].dt.hour
-        df_month['distance_km'] = haversine_distance(df_month['lat'], df_month['long'],
-                                                    df_month['merch_lat'], df_month['merch_long'])
-        df_month['amt_log'] = np.log1p(df_month['amt'])
+        # Apply feature engineering using baseline statistics
+        from src.core.data_loader import _engineer_features
+        df_month = _engineer_features(
+            df_month,
+            merchant_stats=baseline_stats['merchant_stats'],
+            category_stats=baseline_stats['category_stats'],
+            state_stats=baseline_stats['state_stats']
+        )
         
         features = Config.FEATURES
         

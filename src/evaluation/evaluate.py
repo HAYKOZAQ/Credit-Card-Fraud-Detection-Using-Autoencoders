@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import shap
 from src.core.config import Config
+from src.training.train import _build_adjacency
 
 
 def get_reconstruction_errors(model, dataloader):
@@ -16,27 +17,32 @@ def get_reconstruction_errors(model, dataloader):
     is_vae = model_name == 'VariationalAutoencoder'
     is_contrastive = model_name == 'ContrastiveAutoencoder'
     is_graph = model_name == 'GraphAutoencoder'
-    
+
     with torch.no_grad():
-        for inputs, _ in dataloader:
-            inputs = inputs.to(Config.DEVICE)
+        for batch_data in dataloader:
+            if is_graph:
+                batch = batch_data.to(Config.DEVICE)
+                inputs = batch.x
+                edge_index = batch.edge_index
+                batch_size = batch.batch_size if hasattr(batch, 'batch_size') else inputs.size(0)
+            else:
+                inputs, _ = batch_data
+                inputs = inputs.to(Config.DEVICE)
+                batch_size = inputs.size(0)
+
             if is_vae:
                 recon_x, _, _ = model(inputs)
             elif is_contrastive:
                 recon_x, _ = model(inputs)
             elif is_graph:
-                dists = torch.cdist(inputs, inputs)
-                sigma = dists.mean()
-                adj = torch.exp(-dists / (sigma + 1e-8))
-                adj = adj / adj.sum(dim=1, keepdim=True)
-                recon_x, _ = model(inputs, adj)
+                recon_x, _ = model(inputs, edge_index)
             else:
                 recon_x = model(inputs)
-                
+
             if len(inputs.shape) == 3: # Sequential
-                mse = torch.mean((inputs - recon_x)**2, dim=(1, 2))
+                mse = torch.mean((inputs[:batch_size] - recon_x[:batch_size])**2, dim=(1, 2))
             else: # Standard
-                mse = torch.mean((inputs - recon_x)**2, dim=1)
+                mse = torch.mean((inputs[:batch_size] - recon_x[:batch_size])**2, dim=1)
             errors.extend(mse.cpu().numpy())
     return np.array(errors)
 
@@ -59,23 +65,37 @@ def plot_feature_importance(model, fraud_loader, feature_names):
     all_inputs = []
     all_reconstructions = []
     is_vae = model.__class__.__name__ == 'VariationalAutoencoder'
+    is_contrastive = model.__class__.__name__ == 'ContrastiveAutoencoder'
+    is_graph = model.__class__.__name__ == 'GraphAutoencoder'
     
     # Sequential models don't easily map to 1D feature importance without attention or averaging
-    if model.__class__.__name__ == 'LSTMAutoencoder':
-        print("Feature importance skipped for LSTM (sequential architecture).")
+    if model.__class__.__name__ == 'LSTMAutoencoder' or model.__class__.__name__ == 'TransformerAutoencoder':
+        print(f"Feature importance skipped for {model.__class__.__name__} (sequential architecture).")
         return
 
     with torch.no_grad():
-        for inputs, _ in fraud_loader:
-            inputs = inputs.to(Config.DEVICE)
-            outputs = model(inputs)
-            if is_vae:
-                recon_x, _, _ = outputs
+        for batch_data in fraud_loader:
+            if is_graph:
+                batch = batch_data.to(Config.DEVICE)
+                inputs = batch.x
+                edge_index = batch.edge_index
+                batch_size = batch.batch_size if hasattr(batch, 'batch_size') else inputs.size(0)
             else:
-                recon_x = outputs
+                inputs, _ = batch_data
+                inputs = inputs.to(Config.DEVICE)
+                batch_size = inputs.size(0)
                 
-            all_inputs.append(inputs.cpu().numpy())
-            all_reconstructions.append(recon_x.cpu().numpy())
+            if is_vae:
+                recon_x, _, _ = model(inputs)
+            elif is_contrastive:
+                recon_x, _ = model(inputs)
+            elif is_graph:
+                recon_x, _ = model(inputs, edge_index)
+            else:
+                recon_x = model(inputs)
+                
+            all_inputs.append(inputs[:batch_size].cpu().numpy())
+            all_reconstructions.append(recon_x[:batch_size].cpu().numpy())
             
     X_fraud = np.concatenate(all_inputs)
     X_recon = np.concatenate(all_reconstructions)
@@ -128,9 +148,11 @@ def get_uncertainty_scores(model, dataloader, num_passes=5):
                 mse = torch.mean((inputs - mean_recon)**2, dim=1)
                 
             # Variance of the reconstruction (uncertainty)
-            variance = torch.var(stacked, dim=0).mean(dim=-1)
+            variance = torch.var(stacked, dim=0)
             if len(inputs.shape) == 3:
-                 variance = variance.mean(dim=-1)
+                variance = variance.mean(dim=(1, 2))
+            else:
+                variance = variance.mean(dim=-1)
             
             all_errors.extend(mse.cpu().numpy())
             all_variances.extend(variance.cpu().numpy())
@@ -299,6 +321,8 @@ def plot_cumulative_fraud(model, test_df, fraud_df, test_loader, fraud_loader,
         plt.savefig(viz_path)
         plt.close()
         print(f"Cumulative plot saved to {viz_path}")
+
+
 def calculate_shap_values(model, train_loader, test_loader, feature_names):
     """
     Computes SHAP values for the Autoencoder.
@@ -315,7 +339,12 @@ def calculate_shap_values(model, train_loader, test_loader, feature_names):
     def model_wrapper(x):
         x_tensor = torch.tensor(x, dtype=torch.float32).to(Config.DEVICE)
         with torch.no_grad():
-            outputs = model(x_tensor)
+            if model.__class__.__name__ == 'GraphAutoencoder':
+                n_nodes = x_tensor.shape[0]
+                edge_index = torch.stack([torch.arange(n_nodes), torch.arange(n_nodes)]).to(Config.DEVICE)
+                outputs = model(x_tensor, edge_index)
+            else:
+                outputs = model(x_tensor)
             if isinstance(outputs, tuple): outputs = outputs[0]
             mse = torch.mean((x_tensor - outputs)**2, dim=1)
         return mse.cpu().numpy()
@@ -334,11 +363,36 @@ def calculate_shap_values(model, train_loader, test_loader, feature_names):
         print(f"Warning: SHAP computation failed ({e}). Skipping SHAP summary plot.")
         return None
     
-    plt.figure()
-    shap.summary_plot(shap_values, test_samples, feature_names=feature_names, show=False)
-    plt.title("SHAP Feature Attribution (Reconstruction Error)")
+    # Calculate mean absolute SHAP values across samples
+    mean_abs_shap = np.mean(np.abs(shap_values), axis=0)
+    
+    # Sort
+    indices = np.argsort(mean_abs_shap)[::-1]
+    top_indices = indices[:15]  # Top 15 features
+    
+    top_features = [feature_names[i] for i in top_indices]
+    top_vals = [mean_abs_shap[i] for i in top_indices]
+    
+    import seaborn as sns
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(10, 8), dpi=150)
+    
+    # Premium gradient colors (light blue to deep blue)
+    colors = sns.color_palette("Blues_r", n_colors=20)[:15]
+    
+    ax.barh(top_features[::-1], top_vals[::-1], color=colors[::-1], edgecolor='none', height=0.6)
+    
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    
+    ax.set_title("📊 Global Feature Attribution (Average Impact)", fontsize=14, fontweight='bold', pad=20, color='#1F2937')
+    ax.set_xlabel("mean(|SHAP value|) (Average contribution to Reconstruction Error)", fontsize=11, labelpad=12, color='#4B5563')
+    
+    plt.tight_layout()
     img_path = os.path.join(Config.VIZ_DIR, "shap_summary.png")
-    plt.savefig(img_path)
+    plt.savefig(img_path, bbox_inches='tight', transparent=True)
     plt.close()
     print(f"SHAP summary saved to {img_path}")
     return shap_values
@@ -352,19 +406,12 @@ def ensemble_scoring(models_dict, dataloader):
     
     for name, model in models_dict.items():
         errors = get_reconstruction_errors(model, dataloader)
-        # Normalize errors to [0, 1] range for fair weighting?
-        # Or just use raw MSE. Better to normalize by max.
-        norm_errors = (errors - errors.min()) / (errors.max() - errors.min() + 1e-10)
         if np.std(errors) < 1e-10:
             norm_errors = np.zeros_like(errors)
         else:
             norm_errors = (errors - errors.min()) / (errors.max() - errors.min() + 1e-10)
         all_scores.append(norm_errors)
-        
-        if 'vae' in name.lower() or 'attention' in name.lower():
-            weights.append(1.5)
-        else:
-            weights.append(1.0)
+        weights.append(1.0)
             
     all_scores = np.array(all_scores)
     weights = np.array(weights).reshape(-1, 1)

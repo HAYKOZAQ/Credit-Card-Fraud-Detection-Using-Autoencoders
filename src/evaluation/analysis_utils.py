@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import pickle
 from src.core.config import Config
 
 def calculate_psi(expected, actual, buckets=10):
@@ -7,6 +8,9 @@ def calculate_psi(expected, actual, buckets=10):
     
     breakpoints = np.arange(0, buckets + 1) / buckets * 100
     breakpoints = np.percentile(expected, breakpoints)
+    breakpoints = np.unique(breakpoints)
+    if len(breakpoints) < 2:
+        return 0.0
     
     expected_percents = np.histogram(expected, breakpoints)[0] / len(expected)
     actual_percents = np.histogram(actual, breakpoints)[0] / len(actual)
@@ -29,7 +33,11 @@ def counterfactual_analysis(model, high_error_sample, target_feature_idx, target
     
     input_tensor = torch.FloatTensor(high_error_sample).unsqueeze(0).to(Config.DEVICE)
     with torch.no_grad():
-        recon = model(input_tensor)
+        if model.__class__.__name__ == 'GraphAutoencoder':
+            adj = torch.eye(1).to(Config.DEVICE)
+            recon = model(input_tensor, adj)
+        else:
+            recon = model(input_tensor)
         if isinstance(recon, tuple): recon = recon[0]
         orig_error = torch.mean((input_tensor - recon)**2).item()
         
@@ -39,7 +47,6 @@ def counterfactual_analysis(model, high_error_sample, target_feature_idx, target
         modified_sample[target_feature_idx] = 0
     else:
         with open(Config.SCALER_PATH, 'rb') as f:
-            import pickle
             scaler = pickle.load(f)
         scaled_val = (target_value - scaler.mean_[target_feature_idx]) / scaler.scale_[target_feature_idx]
         modified_sample[target_feature_idx] = scaled_val
@@ -47,7 +54,11 @@ def counterfactual_analysis(model, high_error_sample, target_feature_idx, target
     # 3. Get new error
     mod_tensor = torch.FloatTensor(modified_sample).unsqueeze(0).to(Config.DEVICE)
     with torch.no_grad():
-        recon_mod = model(mod_tensor)
+        if model.__class__.__name__ == 'GraphAutoencoder':
+            adj = torch.eye(1).to(Config.DEVICE)
+            recon_mod = model(mod_tensor, adj)
+        else:
+            recon_mod = model(mod_tensor)
         if isinstance(recon_mod, tuple): recon_mod = recon_mod[0]
         new_error = torch.mean((mod_tensor - recon_mod)**2).item()
         

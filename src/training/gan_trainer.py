@@ -58,7 +58,7 @@ class GANTrainer:
                 g_loss.backward()
                 self.g_optimizer.step()
                 
-            if (epoch+1) % 10 == 0 and d_loss is not None:
+            if (epoch+1) % 10 == 0 and d_loss is not None and g_loss is not None:
                 print(f"GAN Epoch {epoch+1}: D_Loss: {d_loss.item():.4f}, G_Loss: {g_loss.item():.4f}")
                 
     def generate_synthetics(self, num_samples):

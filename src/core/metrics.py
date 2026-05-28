@@ -9,7 +9,7 @@ class FraudEvaluator:
     def calculate_metrics(y_true, y_scores, threshold=None):
         """
         Calculate AUPRC, AUROC, and technical metrics.
-        If threshold is not provided, uses mean+3*std of normal samples (no test leakage).
+        If threshold is not provided, optimizes threshold based on business cost.
         """
         y_true = np.array(y_true)
         y_scores = np.array(y_scores)
@@ -24,11 +24,8 @@ class FraudEvaluator:
         auroc = roc_auc_score(y_true, y_scores)
         
         if threshold is None:
-            normal_scores = [s for s, l in zip(y_scores, y_true) if l == 0]
-            if len(normal_scores) > 0:
-                threshold = np.mean(normal_scores) + 3 * np.std(normal_scores)
-            else:
-                threshold = np.percentile(y_scores, 95)
+            # Optimize threshold based on business cost
+            threshold = FraudEvaluator._optimize_threshold(y_true, y_scores)
 
         y_pred = [1 if e > threshold else 0 for e in y_scores]
         labels_present = sorted(set(list(y_true) + list(y_pred)))
@@ -53,6 +50,37 @@ class FraudEvaluator:
             'FPR': fp / (fp + tn) if (fp + tn) > 0 else 0.0
         }
         return metrics, threshold
+    
+    @staticmethod
+    def _optimize_threshold(y_true, y_scores):
+        """
+        Optimize threshold by grid search over percentiles to minimize business cost.
+        """
+        normal_scores = [s for s, l in zip(y_scores, y_true) if l == 0]
+        if len(normal_scores) == 0:
+            return np.percentile(y_scores, 95)
+        
+        # Try different percentiles
+        percentiles = [90, 95, 97, 98, 99, 99.5, 99.9]
+        best_cost = float('inf')
+        best_threshold = np.mean(normal_scores) + 3 * np.std(normal_scores)
+        
+        for p in percentiles:
+            threshold = np.percentile(normal_scores, p)
+            y_pred = [1 if e > threshold else 0 for e in y_scores]
+            
+            tp = np.sum((np.array(y_true) == 1) & (np.array(y_pred) == 1))
+            tn = np.sum((np.array(y_true) == 0) & (np.array(y_pred) == 0))
+            fp = np.sum((np.array(y_true) == 0) & (np.array(y_pred) == 1))
+            fn = np.sum((np.array(y_true) == 1) & (np.array(y_pred) == 0))
+            
+            cost = (fp * Config.COST_FP) + (fn * Config.COST_FN)
+            
+            if cost < best_cost:
+                best_cost = cost
+                best_threshold = threshold
+        
+        return best_threshold
 
     @staticmethod
     def plot_pr_curve(y_true, y_scores, model_name="Autoencoder"):

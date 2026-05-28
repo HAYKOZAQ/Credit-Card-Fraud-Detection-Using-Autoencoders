@@ -13,14 +13,22 @@ class Config:
     
     # Preprocessing
     CATEGORICAL_COLS = ['category', 'job']
-    FEATURES = ['category', 'job', 'city_pop', 'age', 'hour', 'distance_km', 'amt_log']
+    FEATURES = [
+        'category', 'job', 'city_pop', 'age', 'hour', 'distance_km', 'amt_log',
+        'amt_zscore_category', 'amt_zscore_merchant', 'amt_ratio_to_median',
+        'is_high_amount', 'is_high_risk_category', 'is_night_transaction',
+        'is_weekend', 'merchant_fraud_rate', 'merchant_transaction_volume',
+        'merchant_avg_amount', 'day_of_week', 'is_month_start', 'is_month_end',
+        'hour_sin', 'hour_cos', 'state_fraud_rate', 'city_pop_log', 'is_rural'
+    ]
     COLS_TO_DROP = ['trans_num', 'trans_date_trans_time', 'dob', 'merchant',
                     'city', 'state', 'lat', 'long', 'merch_lat', 'merch_long', 'amt']
     
     # Model Hyperparameters
     INPUT_DIM = len(FEATURES)
-    HIDDEN_DIM1 = 5
-    LATENT_DIM = 3
+    HIDDEN_DIM1 = 64
+    HIDDEN_DIM2 = 32
+    LATENT_DIM = 16
     
     # VAE Specific
     BETA = 0.01  # KL Divergence weight

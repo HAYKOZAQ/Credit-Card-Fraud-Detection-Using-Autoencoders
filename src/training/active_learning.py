@@ -24,6 +24,7 @@ class ActiveLearningLab:
         return get_reconstruction_errors(self.ae, loader)
         
     def run_simulation(self, strategy='reconstruction_error', budget=100, step_size=10):
+        self.results = {'step': [], 'auprc': [], 'strategy': []}
         labeled_mask = np.zeros(len(self.X_pool), dtype=bool)
         current_indices = []
         

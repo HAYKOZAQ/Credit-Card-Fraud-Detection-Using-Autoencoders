@@ -54,8 +54,16 @@ def log_experiment(model_name, history, metrics=None):
     with open(log_path, 'w') as f:
         json.dump(logs, f, indent=4)
 
-def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, save_name=None):
-    optimizer = optim.Adam(model.parameters(), lr=Config.LEARNING_RATE)
+def _build_adjacency(inputs):
+    dists = torch.cdist(inputs, inputs)
+    sigma = dists.mean()
+    adj = torch.exp(-dists / (sigma + 1e-8))
+    adj = adj / adj.sum(dim=1, keepdim=True)
+    return adj
+
+def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, save_name=None, lr=None):
+    learning_rate = lr if lr is not None else Config.LEARNING_RATE
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.MSELoss()
     
     model_name = model.__class__.__name__
@@ -64,6 +72,7 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, s
     is_graph = model_name == 'GraphAutoencoder'
     
     best_loss = float('inf')
+    patience_counter = 0
     history = {'train_loss': [], 'val_loss': []}
     
     num_epochs = epochs if epochs is not None else Config.EPOCHS
@@ -74,20 +83,26 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, s
     for epoch in range(num_epochs):
         model.train()
         train_loss = 0.0
-        for inputs, targets in train_loader:
-            inputs, targets = inputs.to(Config.DEVICE), targets.to(Config.DEVICE)
+        for batch_data in train_loader:
+            if is_graph:
+                batch = batch_data.to(Config.DEVICE)
+                inputs = batch.x
+                targets = batch.x # Autoencoder reconstructs inputs
+                edge_index = batch.edge_index
+                batch_size = batch.batch_size if hasattr(batch, 'batch_size') else inputs.size(0)
+            else:
+                inputs, targets = batch_data
+                inputs, targets = inputs.to(Config.DEVICE), targets.to(Config.DEVICE)
+                batch_size = inputs.size(0)
             
-            # Adversarial Perturbation (Simple FGSM for training)
-            if adv_train:
-                inputs.requires_grad = True
-                outputs = model(inputs)
-                if isinstance(outputs, tuple): outputs = outputs[0]
-                loss_clean = criterion(outputs, targets)
-                model.zero_grad()
-                loss_clean.backward(retain_graph=True)
-                data_grad = inputs.grad.data
-                perturbed_inputs = inputs + 0.02 * data_grad.sign()
-                inputs = perturbed_inputs.detach()
+            if adv_train and not is_graph:
+                inputs_adv = inputs.clone().detach().requires_grad_(True)
+                outputs_adv = model(inputs_adv)
+                if isinstance(outputs_adv, tuple): outputs_adv = outputs_adv[0]
+                loss_adv = criterion(outputs_adv, targets)
+                loss_adv.backward()
+                data_grad = inputs_adv.grad.data
+                inputs = (inputs + 0.02 * data_grad.sign()).detach()
             
             optimizer.zero_grad()
             
@@ -103,11 +118,7 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, s
                 loss_cont = nt_xent_loss(z_a, z_b)
                 loss = loss_recon + 0.1 * loss_cont
             elif is_graph:
-                dists = torch.cdist(inputs, inputs)
-                sigma = dists.mean()
-                adj = torch.exp(-dists / (sigma + 1e-8))
-                adj = adj / adj.sum(dim=1, keepdim=True)
-                recon_x, _ = model(inputs, adj)
+                recon_x, _ = model(inputs, edge_index)
                 loss = criterion(recon_x, targets)
             else:
                 outputs = model(inputs)
@@ -115,16 +126,26 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, s
                 
             loss.backward()
             optimizer.step()
-            train_loss += loss.item() * inputs.size(0)
+            train_loss += loss.item() * batch_size
         
-        train_loss /= len(train_loader.dataset)
+        train_loss /= len(train_loader.dataset) if hasattr(train_loader, 'dataset') else len(train_loader.sampler)
         
         # Validation
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for inputs, targets in val_loader:
-                inputs, targets = inputs.to(Config.DEVICE), targets.to(Config.DEVICE)
+            for batch_data in val_loader:
+                if is_graph:
+                    batch = batch_data.to(Config.DEVICE)
+                    inputs = batch.x
+                    targets = batch.x
+                    edge_index = batch.edge_index
+                    batch_size = batch.batch_size if hasattr(batch, 'batch_size') else inputs.size(0)
+                else:
+                    inputs, targets = batch_data
+                    inputs, targets = inputs.to(Config.DEVICE), targets.to(Config.DEVICE)
+                    batch_size = inputs.size(0)
+
                 if is_vae:
                     recon_x, mu, logvar = model(inputs)
                     loss = vae_loss_function(recon_x, targets, mu, logvar)
@@ -132,27 +153,29 @@ def train_model(model, train_loader, val_loader, epochs=None, adv_train=False, s
                     recon_x, z = model(inputs)
                     loss = criterion(recon_x, targets)
                 elif is_graph:
-                    dists = torch.cdist(inputs, inputs)
-                    sigma = dists.mean()
-                    adj = torch.exp(-dists / (sigma + 1e-8))
-                    adj = adj / adj.sum(dim=1, keepdim=True)
-                    recon_x, _ = model(inputs, adj)
+                    recon_x, _ = model(inputs, edge_index)
                     loss = criterion(recon_x, targets)
                 else:
                     outputs = model(inputs)
                     loss = criterion(outputs, targets)
-                val_loss += loss.item() * inputs.size(0)
+                val_loss += loss.item() * batch_size
         
-        val_loss /= len(val_loader.dataset)
+        val_loss /= len(val_loader.dataset) if hasattr(val_loader, 'dataset') else len(val_loader.sampler)
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
         print(f"Epoch {epoch+1}/{num_epochs} - loss: {train_loss:.4f} - val_loss: {val_loss:.4f}")
         
         if val_loss < best_loss:
             best_loss = val_loss
+            patience_counter = 0
             save_filename = save_name if save_name else f"{model_name.lower()}.pth"
             model_save_path = os.path.join(Config.MODEL_DIR, save_filename)
             torch.save(model.state_dict(), model_save_path)
+        else:
+            patience_counter += 1
+            if patience_counter >= Config.EARLY_STOPPING_PATIENCE:
+                print(f"Early stopping at epoch {epoch+1} (no improvement for {patience_counter} epochs)")
+                break
                 
     log_experiment(model_name, history)
     return history

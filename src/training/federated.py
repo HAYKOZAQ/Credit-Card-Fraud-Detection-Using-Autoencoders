@@ -56,17 +56,6 @@ class FederatedServer:
         self.global_model.load_state_dict(global_dict)
         return global_dict
 
-def prepare_federated_data():
-    """
-    Prepares data for federated learning simulation.
-    Loads the global scaler and raw dataframe for downstream client partitioning.
-    """
-    import pickle
-    df = pd.read_csv(Config.DATA_PATH)
-    with open(Config.SCALER_PATH, 'rb') as f:
-        scaler = pickle.load(f)
-    return scaler, df
-
 def run_federated_simulation(num_rounds=5):
     print("Initializing Federated Learning Simulation...")
     from src.core.data_loader import get_dataloaders
@@ -74,11 +63,6 @@ def run_federated_simulation(num_rounds=5):
     X_train = train_loader.dataset.data.numpy()
     
     num_clients = 3
-    client_data_len = len(X_train) // num_clients
-    remainder = len(X_train) % num_clients
-    if remainder != 0:
-        print(f"Note: {remainder} sample(s) dropped due to uneven client split.")
-    
     clients = []
     indices = np.arange(len(X_train))
     np.random.shuffle(indices)
@@ -86,11 +70,8 @@ def run_federated_simulation(num_rounds=5):
     global_model = get_model('standard').to(Config.DEVICE)
     server = FederatedServer(global_model)
     
-    start = 0
-    for i in range(num_clients):
-        extra = 1 if i < remainder else 0
-        subset_idx = indices[start : start + client_data_len + extra]
-        start += client_data_len + extra
+    splits = np.array_split(indices, num_clients)
+    for i, subset_idx in enumerate(splits):
         client_data = X_train[subset_idx]
         clients.append(FederatedClient(f"Bank_{i+1}", client_data, Config.DEVICE))
         

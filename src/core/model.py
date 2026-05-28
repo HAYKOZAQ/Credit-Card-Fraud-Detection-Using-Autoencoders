@@ -7,13 +7,25 @@ class Autoencoder(nn.Module):
         super(Autoencoder, self).__init__()
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
             nn.ReLU(),
-            nn.Linear(Config.HIDDEN_DIM1, Config.LATENT_DIM),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM1, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM2, Config.LATENT_DIM),
             nn.ReLU()
         )
         self.decoder = nn.Sequential(
-            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM1),
+            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
             nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM2, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(Config.HIDDEN_DIM1, input_dim)
         )
 
@@ -21,36 +33,53 @@ class Autoencoder(nn.Module):
         return self.decoder(self.encoder(x))
 
 class AttentionBlock(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, num_heads=4):
         super(AttentionBlock, self).__init__()
-        self.query = nn.Linear(input_dim, input_dim)
-        self.key = nn.Linear(input_dim, input_dim)
-        self.value = nn.Linear(input_dim, input_dim)
-        self.scale = input_dim ** -0.5
+        self.num_heads = num_heads
+        self.head_dim = input_dim // num_heads
+        assert input_dim % num_heads == 0, "input_dim must be divisible by num_heads"
+        
+        self.qkv = nn.Linear(input_dim, 3 * input_dim)
+        self.out_proj = nn.Linear(input_dim, input_dim)
+        self.scale = self.head_dim ** -0.5
         
     def forward(self, x):
-        q = self.query(x).unsqueeze(1)
-        k = self.key(x).unsqueeze(1)
-        v = self.value(x).unsqueeze(1)
+        batch_size = x.size(0)
+        qkv = self.qkv(x).chunk(3, dim=-1)
+        q, k, v = [t.view(batch_size, self.num_heads, self.head_dim) for t in qkv]
+        
         scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
         attn = torch.softmax(scores, dim=-1)
-        context = torch.matmul(attn, v).squeeze(1)
-        return context + x
+        context = torch.matmul(attn, v)
+        context = context.view(batch_size, -1)
+        return self.out_proj(context) + x
 
 class AttentionAutoencoder(nn.Module):
     def __init__(self, input_dim=Config.INPUT_DIM):
         super(AttentionAutoencoder, self).__init__()
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
             nn.ReLU(),
             AttentionBlock(Config.HIDDEN_DIM1),
-            nn.Linear(Config.HIDDEN_DIM1, Config.LATENT_DIM),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM1, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM2, Config.LATENT_DIM),
             nn.ReLU()
         )
         self.decoder = nn.Sequential(
-            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM1),
+            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
             nn.ReLU(),
-            AttentionBlock(Config.HIDDEN_DIM1),
+            AttentionBlock(Config.HIDDEN_DIM2),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM2, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(Config.HIDDEN_DIM1, input_dim)
         )
 
@@ -95,8 +124,14 @@ class ContrastiveAutoencoder(nn.Module):
         super(ContrastiveAutoencoder, self).__init__()
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
             nn.ReLU(),
-            nn.Linear(Config.HIDDEN_DIM1, Config.LATENT_DIM),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM1, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM2, Config.LATENT_DIM),
         )
         # Projection head for contrastive loss
         self.projector = nn.Sequential(
@@ -105,8 +140,14 @@ class ContrastiveAutoencoder(nn.Module):
             nn.Linear(Config.LATENT_DIM, Config.LATENT_DIM)
         )
         self.decoder = nn.Sequential(
-            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM1),
+            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
             nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM2, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(Config.HIDDEN_DIM1, input_dim)
         )
 
@@ -116,14 +157,17 @@ class ContrastiveAutoencoder(nn.Module):
         recon = self.decoder(h)
         return recon, z
 
+try:
+    from torch_geometric.nn import GCNConv
+except ImportError:
+    GCNConv = None
+
 class GraphConvolution(nn.Module):
     def __init__(self, in_features, out_features):
         super(GraphConvolution, self).__init__()
         self.linear = nn.Linear(in_features, out_features)
 
     def forward(self, x, adj):
-        # Very simple GCN: D^-1/2 A D^-1/2 X W
-        # Simplified for tabular where adj might be dynamic: A X W
         support = self.linear(x)
         output = torch.mm(adj, support)
         return output
@@ -131,34 +175,47 @@ class GraphConvolution(nn.Module):
 class GraphAutoencoder(nn.Module):
     def __init__(self, input_dim=Config.INPUT_DIM):
         super(GraphAutoencoder, self).__init__()
-        self.gc1 = GraphConvolution(input_dim, Config.HIDDEN_DIM1)
-        self.gc2 = GraphConvolution(Config.HIDDEN_DIM1, Config.LATENT_DIM)
-        self.dc1 = GraphConvolution(Config.LATENT_DIM, Config.HIDDEN_DIM1)
-        self.dc2 = GraphConvolution(Config.HIDDEN_DIM1, input_dim)
+        if GCNConv is None:
+            raise ImportError("Please install torch-geometric to use GraphAutoencoder.")
+            
+        self.gc1 = GCNConv(input_dim, Config.HIDDEN_DIM1)
+        self.gc2 = GCNConv(Config.HIDDEN_DIM1, Config.LATENT_DIM)
+        self.dc1 = GCNConv(Config.LATENT_DIM, Config.HIDDEN_DIM1)
+        self.dc2 = GCNConv(Config.HIDDEN_DIM1, input_dim)
 
-    def forward(self, x, adj):
-        h1 = torch.relu(self.gc1(x, adj))
-        z = torch.relu(self.gc2(h1, adj))
-        h2 = torch.relu(self.dc1(z, adj))
-        recon = self.dc2(h2, adj)
+    def forward(self, x, edge_index):
+        h1 = torch.relu(self.gc1(x, edge_index))
+        z = torch.relu(self.gc2(h1, edge_index))
+        h2 = torch.relu(self.dc1(z, edge_index))
+        recon = self.dc2(h2, edge_index)
         return recon, z
 
 class VariationalAutoencoder(nn.Module):
     def __init__(self, input_dim=Config.INPUT_DIM):
         super(VariationalAutoencoder, self).__init__()
         self.fc1 = nn.Linear(input_dim, Config.HIDDEN_DIM1)
-        self.fc2_mu = nn.Linear(Config.HIDDEN_DIM1, Config.LATENT_DIM)
-        self.fc2_logvar = nn.Linear(Config.HIDDEN_DIM1, Config.LATENT_DIM)
+        self.bn1 = nn.BatchNorm1d(Config.HIDDEN_DIM1)
+        self.fc2 = nn.Linear(Config.HIDDEN_DIM1, Config.HIDDEN_DIM2)
+        self.bn2 = nn.BatchNorm1d(Config.HIDDEN_DIM2)
+        self.fc2_mu = nn.Linear(Config.HIDDEN_DIM2, Config.LATENT_DIM)
+        self.fc2_logvar = nn.Linear(Config.HIDDEN_DIM2, Config.LATENT_DIM)
         
         self.decoder = nn.Sequential(
-            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM1),
+            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
             nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(Config.HIDDEN_DIM2, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(Config.HIDDEN_DIM1, input_dim)
         )
 
     def encode(self, x):
-        h1 = torch.relu(self.fc1(x))
-        return self.fc2_mu(h1), self.fc2_logvar(h1)
+        h1 = torch.relu(self.bn1(self.fc1(x)))
+        h2 = torch.relu(self.bn2(self.fc2(h1)))
+        return self.fc2_mu(h2), self.fc2_logvar(h2)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -194,38 +251,91 @@ class LSTMAutoencoder(nn.Module):
     def forward(self, x):
         batch_size, seq_len, _ = x.size()
         
-        # Encode
-        _, (h_n, _) = self.encoder_lstm(x)
+        _, (h_n, c_n) = self.encoder_lstm(x)
         latent = torch.relu(self.to_latent(h_n.squeeze(0)))
         
-        # Decode
         h_0_dec = self.from_latent(latent).unsqueeze(0)
-        c_0_dec = torch.zeros_like(h_0_dec)
+        c_0_dec = c_n
         
-        # Repeat latent or use zeros as input
-        # Standard: use zeros or previous output. Here zeros for simplicity.
-        dec_input = torch.zeros(batch_size, seq_len, self.hidden_dim).to(Config.DEVICE)
+        hidden_input = h_0_dec.squeeze(0).unsqueeze(1).repeat(1, seq_len, 1)
         
-        dec_out, _ = self.decoder_lstm(dec_input, (h_0_dec, c_0_dec))
+        dec_out, _ = self.decoder_lstm(hidden_input, (h_0_dec, c_0_dec))
         
-        # [batch, seq, hidden_dim] -> [batch, seq, input_dim]
         recon = self.output_layer(dec_out)
         return recon
 
+class TransformerAutoencoder(nn.Module):
+    def __init__(self, input_dim=Config.INPUT_DIM, d_model=32, nhead=4, num_layers=2):
+        super(TransformerAutoencoder, self).__init__()
+        self.d_model = d_model
+        
+        # Project input features to d_model dimensions
+        self.input_projection = nn.Linear(input_dim, d_model)
+        
+        # Encoder
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        self.to_latent = nn.Linear(d_model, Config.LATENT_DIM)
+        
+        # Decoder
+        self.from_latent = nn.Linear(Config.LATENT_DIM, d_model)
+        
+        decoder_layer = nn.TransformerDecoderLayer(d_model=d_model, nhead=nhead, batch_first=True)
+        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        
+        # Project back to original input dimensions
+        self.output_projection = nn.Linear(d_model, input_dim)
+
+    def forward(self, x):
+        # x shape: [batch, seq_len, input_dim]
+        batch_size, seq_len, _ = x.size()
+        
+        # Project input: [batch, seq_len, d_model]
+        x_proj = self.input_projection(x)
+        
+        # Encode: [batch, seq_len, d_model]
+        memory = self.transformer_encoder(x_proj)
+        
+        # Pool to get latent representation (using mean pooling over sequence)
+        pooled_memory = memory.mean(dim=1)
+        latent = torch.relu(self.to_latent(pooled_memory))
+        
+        # Decode
+        latent_expanded = self.from_latent(latent).unsqueeze(1).repeat(1, seq_len, 1)
+        
+        dec_out = self.transformer_decoder(latent_expanded, memory)
+        
+        # Project back to input dim
+        recon = self.output_projection(dec_out)
+        
+        return recon
+
+
 class MCDropoutAutoencoder(nn.Module):
-    def __init__(self, input_dim=Config.INPUT_DIM, dropout_rate=0.2):
+    def __init__(self, input_dim=Config.INPUT_DIM, dropout_rate=0.3):
         super(MCDropoutAutoencoder, self).__init__()
         self.dropout_rate = dropout_rate
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
             nn.ReLU(),
             nn.Dropout(p=dropout_rate),
-            nn.Linear(Config.HIDDEN_DIM1, Config.LATENT_DIM),
+            nn.Linear(Config.HIDDEN_DIM1, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(Config.HIDDEN_DIM2, Config.LATENT_DIM),
             nn.ReLU(),
             nn.Dropout(p=dropout_rate)
         )
         self.decoder = nn.Sequential(
-            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM1),
+            nn.Linear(Config.LATENT_DIM, Config.HIDDEN_DIM2),
+            nn.BatchNorm1d(Config.HIDDEN_DIM2),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(Config.HIDDEN_DIM2, Config.HIDDEN_DIM1),
+            nn.BatchNorm1d(Config.HIDDEN_DIM1),
             nn.ReLU(),
             nn.Dropout(p=dropout_rate),
             nn.Linear(Config.HIDDEN_DIM1, input_dim)
@@ -244,6 +354,8 @@ def get_model(model_type='standard'):
         return DenoisingAutoencoder().to(Config.DEVICE)
     elif model_type == 'lstm':
         return LSTMAutoencoder().to(Config.DEVICE)
+    elif model_type == 'transformer':
+        return TransformerAutoencoder().to(Config.DEVICE)
     elif model_type == 'mc_dropout':
         return MCDropoutAutoencoder().to(Config.DEVICE)
     elif model_type == 'attention_ae':

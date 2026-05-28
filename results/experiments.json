@@ -369,5 +369,544 @@
         "epochs": 30,
         "final_val_loss": 0.5163602623504971,
         "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:45:11 2026",
+        "model": "GraphAutoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0031632035970688,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:45:11 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9573817402124405,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:45:12 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.8316335380077362,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:51:58 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0131233930587769,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:51:58 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.8998492658138275,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:51:59 2026",
+        "model": "Autoencoder",
+        "epochs": 100,
+        "final_val_loss": 0.058419305831193924,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:52:28 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.065700888633728,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:52:28 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.8625577688217163,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:52:29 2026",
+        "model": "Autoencoder",
+        "epochs": 100,
+        "final_val_loss": 27.831228256225586,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:53:06 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.895097553730011,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:53:06 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.6847875714302063,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 00:53:06 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 1.0542215704917908,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:06:02 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0409029722213745,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:06:02 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.983092874288559,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:06:02 2026",
+        "model": "Autoencoder",
+        "epochs": 4,
+        "final_val_loss": 0.8784836828708649,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:06:44 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9507279098033905,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:06:44 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0449416935443878,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:06:44 2026",
+        "model": "Autoencoder",
+        "epochs": 4,
+        "final_val_loss": 0.9937660098075867,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:14:08 2026",
+        "model": "Autoencoder",
+        "epochs": 8,
+        "final_val_loss": 0.2239542929410564,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:20:58 2026",
+        "model": "VariationalAutoencoder",
+        "epochs": 10,
+        "final_val_loss": 0.3270506210183529,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:26:30 2026",
+        "model": "DenoisingAutoencoder",
+        "epochs": 10,
+        "final_val_loss": 0.23981253936934205,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:35:09 2026",
+        "model": "ContrastiveAutoencoder",
+        "epochs": 9,
+        "final_val_loss": 0.2415487247624299,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:38:39 2026",
+        "model": "GraphAutoencoder",
+        "epochs": 10,
+        "final_val_loss": 0.9689145667013229,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:47:59 2026",
+        "model": "MCDropoutAutoencoder",
+        "epochs": 13,
+        "final_val_loss": 0.4757376758649825,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 01:58:23 2026",
+        "model": "DenoisingAutoencoder",
+        "epochs": 18,
+        "final_val_loss": 0.20889735673319568,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 09:52:04 2026",
+        "model": "MCDropoutAutoencoder",
+        "epochs": 13,
+        "final_val_loss": 0.4757376758649825,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 10:06:01 2026",
+        "model": "DenoisingAutoencoder",
+        "epochs": 18,
+        "final_val_loss": 0.20889735673319568,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 10:32:15 2026",
+        "model": "LSTMAutoencoder",
+        "epochs": 30,
+        "final_val_loss": 0.018106356746595217,
+        "metrics": null
+    },
+    {
+        "timestamp": "Wed May 27 10:46:36 2026",
+        "model": "LSTMAutoencoder",
+        "epochs": 19,
+        "final_val_loss": 0.04857995233600495,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 13:32:47 2026",
+        "model": "Autoencoder",
+        "epochs": 8,
+        "final_val_loss": 0.2239542929410564,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 13:40:29 2026",
+        "model": "VariationalAutoencoder",
+        "epochs": 10,
+        "final_val_loss": 0.3270506210183529,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 13:46:59 2026",
+        "model": "DenoisingAutoencoder",
+        "epochs": 10,
+        "final_val_loss": 0.23981253936934205,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 13:56:07 2026",
+        "model": "ContrastiveAutoencoder",
+        "epochs": 9,
+        "final_val_loss": 0.2415487247624299,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 14:06:55 2026",
+        "model": "MCDropoutAutoencoder",
+        "epochs": 13,
+        "final_val_loss": 0.4757376758649825,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 14:19:12 2026",
+        "model": "DenoisingAutoencoder",
+        "epochs": 18,
+        "final_val_loss": 0.20889735673319568,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 14:34:47 2026",
+        "model": "Autoencoder",
+        "epochs": 8,
+        "final_val_loss": 0.2239542929410564,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 14:40:46 2026",
+        "model": "VariationalAutoencoder",
+        "epochs": 9,
+        "final_val_loss": 0.350499700841831,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 14:48:13 2026",
+        "model": "AttentionAutoencoder",
+        "epochs": 8,
+        "final_val_loss": 0.20007885247347648,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 14:56:09 2026",
+        "model": "Autoencoder",
+        "epochs": 8,
+        "final_val_loss": 0.2239542929410564,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 15:03:15 2026",
+        "model": "VariationalAutoencoder",
+        "epochs": 11,
+        "final_val_loss": 0.33611342846698855,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 15:15:46 2026",
+        "model": "Autoencoder",
+        "epochs": 19,
+        "final_val_loss": 0.2470285611602995,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 15:19:50 2026",
+        "model": "Autoencoder",
+        "epochs": 19,
+        "final_val_loss": 0.2470285611602995,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 15:21:55 2026",
+        "model": "Autoencoder",
+        "epochs": 15,
+        "final_val_loss": 0.23975819568779136,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 15:23:57 2026",
+        "model": "Autoencoder",
+        "epochs": 13,
+        "final_val_loss": 0.2723215736221064,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 15:25:43 2026",
+        "model": "Autoencoder",
+        "epochs": 11,
+        "final_val_loss": 0.27952937485478846,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:21:11 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0405814051628113,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:21:11 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9933658242225647,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:21:11 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 1.0277993083000183,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:29:30 2026",
+        "model": "Autoencoder",
+        "epochs": 8,
+        "final_val_loss": 0.2239542929410564,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:32:31 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.8472219109535217,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:32:31 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0501266121864319,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:32:32 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 0.9825487732887268,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:35:29 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9281060099601746,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:35:29 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.8987365365028381,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:35:29 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 0.9589585363864899,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:37:30 2026",
+        "model": "GraphAutoencoder",
+        "epochs": 4,
+        "final_val_loss": 0.9705532251963703,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:47:45 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9977992177009583,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:47:45 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0074879229068756,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 16:47:45 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 1.0101634562015533,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:00:40 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0725331008434296,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:00:40 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0022234618663788,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:00:41 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 0.9692228734493256,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:04:32 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0761761665344238,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:04:32 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0739077031612396,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:04:32 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 0.8819730281829834,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:08:52 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.063130795955658,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:08:53 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9252202212810516,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 17:08:53 2026",
+        "model": "Autoencoder",
+        "epochs": 4,
+        "final_val_loss": 1.0169450640678406,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 20:53:19 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.1000494956970215,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 20:53:19 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9409964382648468,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 20:53:19 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 0.9633115530014038,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 21:04:02 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0693714022636414,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 21:04:03 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9731856286525726,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 21:04:03 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 1.0346755385398865,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 21:06:40 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 1.0532017946243286,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 21:06:40 2026",
+        "model": "Autoencoder",
+        "epochs": 2,
+        "final_val_loss": 0.9275164008140564,
+        "metrics": null
+    },
+    {
+        "timestamp": "Thu May 28 21:06:41 2026",
+        "model": "Autoencoder",
+        "epochs": 5,
+        "final_val_loss": 1.033695101737976,
+        "metrics": null
     }
 ]
